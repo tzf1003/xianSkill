@@ -23,6 +23,8 @@ class SkillCreate(BaseModel):
     version: str = "1.0.0"
     input_schema: dict | None = None
     output_schema: dict | None = None
+    prompt_template: str | None = None
+    runner_config: dict | None = None
 
 
 class SkillOut(BaseModel):
@@ -103,8 +105,28 @@ class JobOut(BaseModel):
     inputs: dict | None
     result: dict | None
     error: str | None
+    log_text: str | None = None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    assets: list["AssetOut"] = []
 
     model_config = {"from_attributes": True}
+
+
+# ── Asset ─────────────────────────────────────────────────────────────
+class AssetOut(BaseModel):
+    id: uuid.UUID
+    filename: str
+    storage_key: str
+    content_type: str | None
+    size_bytes: int | None
+    download_url: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+# ── Upload ────────────────────────────────────────────────────────────
+class UploadOut(BaseModel):
+    object_key: str
+    input_hash: str

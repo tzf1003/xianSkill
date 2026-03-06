@@ -1,0 +1,9 @@
+-- M2: 为已有 M1 实例添加字段（迁移脚本）
+-- 在 M1 数据库上执行此脚本以升级到 M2
+
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS prompt_template TEXT;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS runner_config JSONB;
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS log_text TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS input_hash VARCHAR(128);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_hash VARCHAR(128);

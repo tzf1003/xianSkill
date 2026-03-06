@@ -44,7 +44,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
-    """使用测试数据库的 AsyncClient。"""
+    """使用测试数据库的 AsyncClient（mock queue 和 storage）。"""
     from app.core import deps
     from app.main import app
 
@@ -52,10 +52,39 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         async with TestSessionLocal() as session:
             yield session
 
+    class DummyQueue:
+        """不入队、不连接 Redis。"""
+        def enqueue(self, *args, **kwargs):
+            return None
+
+    class MockStorage:
+        """内存存储，无需 MinIO。"""
+        def __init__(self):
+            self._data: dict[str, bytes] = {}
+
+        def ensure_bucket(self): pass
+
+        def put_bytes(self, key, data, content_type="application/octet-stream"):
+            self._data[key] = data
+
+        def get_bytes(self, key) -> bytes:
+            return self._data.get(key, b"")
+
+        def presigned_get_url(self, key, expires_seconds=3600) -> str:
+            return f"http://mock-storage/{key}"
+
+        def presigned_put_url(self, key, expires_seconds=3600) -> str:
+            return f"http://mock-storage-put/{key}"
+
     app.dependency_overrides[deps.get_db] = override_get_db
+    app.dependency_overrides[deps.get_queue] = lambda: DummyQueue()
+    app.dependency_overrides[deps.get_storage] = lambda: MockStorage()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+    app.dependency_overrides.clear()
+
 
     app.dependency_overrides.clear()

@@ -9,6 +9,7 @@ minio>=7.2,<8
 pydantic>=2.6,<3
 pydantic-settings>=2.2,<3
 python-multipart>=0.0.9
+Pillow>=10.0
 
 # dev
 pytest>=8.0,<9

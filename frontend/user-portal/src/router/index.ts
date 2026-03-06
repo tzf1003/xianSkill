@@ -9,7 +9,13 @@ const router = createRouter({
       name: "home",
       component: Home,
     },
+    {
+      path: "/s/:token",
+      name: "delivery",
+      component: () => import("@/views/SkillDelivery.vue"),
+    },
   ],
 });
 
 export default router;
+

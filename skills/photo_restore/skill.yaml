@@ -1,0 +1,31 @@
+name: photo_restore
+type: prompt
+version: "1.0.0"
+description: |
+  使用 AI 修复并增强旧照片：去噪、色彩恢复、细节增强。
+  上传一张模糊或受损的图片，几秒内获得修复版本。
+
+input_schema:
+  type: object
+  properties:
+    image_key:
+      type: string
+      description: "MinIO object key，由 /v1/public/upload 返回"
+  required:
+    - image_key
+
+output_schema:
+  type: object
+  properties:
+    assets:
+      type: array
+      items:
+        type: object
+        properties:
+          filename:
+            type: string
+          download_url:
+            type: string
+
+runner: prompt
+prompt_file: prompt.md
