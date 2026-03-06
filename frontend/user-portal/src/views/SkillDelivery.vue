@@ -338,7 +338,9 @@ onMounted(async () => {
     tokenInfo.value = info
     projectInfo.value = info.project ?? null
     for (const g of (info.project?.options?.option_groups ?? [])) {
-      if (g.type === 'single_choice' && g.default) {
+      if (g.type === 'toggle' && g.default) {
+        selectedOptions.value.add(g.id)
+      } else if (g.type === 'single_choice' && g.default) {
         singleChoiceMap.value.set(g.id, String(g.default))
       }
     }

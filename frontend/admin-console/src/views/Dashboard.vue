@@ -264,13 +264,15 @@ onMounted(async () => {
 @media (prefers-reduced-motion: reduce) { .kpi-skeleton { animation: none; } }
 
 /* ── Charts Row ── */
-.charts-row { display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: start; }
+.charts-row { display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: stretch; }
 
 .chart-card, .table-card {
   background: var(--bg-card); border-radius: 14px;
   border: 1px solid var(--border); padding: 22px 24px;
   box-shadow: var(--shadow-sm);
 }
+.chart-card { display: flex; flex-direction: column; }
+.chart-card .job-bars { flex: 1; justify-content: center; }
 .chart-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
 .chart-title { font-family: 'Poppins', sans-serif; font-size: 1rem; font-weight: 700; color: var(--text); }
 .chart-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
