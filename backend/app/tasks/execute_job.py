@@ -91,7 +91,7 @@ async def run_job(job_id_str: str) -> None:
         job.log_text = json.dumps(job_logs, ensure_ascii=False)
         await session.commit()
 
-        _MAX_RETRIES = 3
+        _MAX_RETRIES = 2
         _TIMEOUT_SECONDS = 180  # 3 分钟
 
         run_result = None
