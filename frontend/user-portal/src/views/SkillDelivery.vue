@@ -1,6 +1,6 @@
 ﻿<template>
   <div class="wizard-page">
-    <!--  加载中  -->
+    <!-- 加载中 -->
     <div v-if="phase === 'loading'" class="full-center">
       <div class="loader-ring" />
       <p class="loader-hint">正在加载，请稍候</p>
@@ -31,7 +31,7 @@
       </header>
 
       <!-- 步骤进度条 -->
-      <div v-if="phase === 'wizard'" class="steps-bar">
+      <div v-if="phase === 'wizard' && (tokenInfo?.remaining ?? 0) > 0" class="steps-bar">
         <div v-for="(lbl, i) in stepLabels" :key="i" class="step-item"
           :class="{ active: wizardStep === i + 1, done: wizardStep > i + 1 }">
           <div class="step-dot">
@@ -43,7 +43,7 @@
       </div>
 
       <!-- STEP 1: 上传图片 -->
-      <div v-if="phase === 'wizard' && wizardStep === 1" class="wizard-body">
+      <div v-if="phase === 'wizard' && (tokenInfo?.remaining ?? 0) > 0 && wizardStep === 1" class="wizard-body">
         <div class="step-hero">
           <div class="step-number">第 1 步</div>
           <h1 class="step-title">上传您的图片</h1>
@@ -80,7 +80,7 @@
       </div>
 
       <!-- STEP 2: 定制选项 -->
-      <div v-if="phase === 'wizard' && wizardStep === 2" class="wizard-body">
+      <div v-if="phase === 'wizard' && (tokenInfo?.remaining ?? 0) > 0 && wizardStep === 2" class="wizard-body">
         <div class="step-hero">
           <div class="step-number">第 2 步</div>
           <h1 class="step-title">定制您的效果</h1>
@@ -127,7 +127,7 @@
       </div>
 
       <!-- STEP 3: 填写需求 -->
-      <div v-if="phase === 'wizard' && wizardStep === 3" class="wizard-body">
+      <div v-if="phase === 'wizard' && (tokenInfo?.remaining ?? 0) > 0 && wizardStep === 3" class="wizard-body">
         <div class="step-hero">
           <div class="step-number">第 3 步</div>
           <h1 class="step-title">告诉我们您的特别需求</h1>
@@ -150,7 +150,7 @@
       </div>
 
       <!-- STEP 4: 确认提交 -->
-      <div v-if="phase === 'wizard' && wizardStep === 4" class="wizard-body">
+      <div v-if="phase === 'wizard' && (tokenInfo?.remaining ?? 0) > 0 && wizardStep === 4" class="wizard-body">
         <div class="step-hero">
           <div class="step-number">第 4 步</div>
           <h1 class="step-title">确认并提交</h1>
@@ -194,92 +194,94 @@
         </div>
       </div>
 
-      <!-- STEP 5: 等待中 -->
-      <div v-if="phase === 'processing' || phase === 'human-pending'" class="wizard-body waiting-body">
-        <div class="waiting-art">
-          <div class="orbit orbit1"><div class="dot d1"/></div>
-          <div class="orbit orbit2"><div class="dot d2"/></div>
-          <div class="orbit orbit3"><div class="dot d3"/></div>
-          <div class="orbit-center">
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5">
-              <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
-            </svg>
-          </div>
-        </div>
-        <template v-if="phase === 'processing'">
-          <h2 class="waiting-title">AI 正在处理您的照片</h2>
-          <p class="waiting-desc">请放松等待，处理完成后页面会自动显示结果。</p>
-          <div class="status-chip"><span class="status-dot-anim" />{{ jobStatusText }}</div>
-        </template>
-        <template v-else>
-          <h2 class="waiting-title">已提交给专业修复师</h2>
-          <p class="waiting-desc">将在 <b>{{ tokenInfo!.human_sla_hours }} 小时</b>内完成，稍后再来查看吧～</p>
-          <p class="waiting-sub">提交时间：{{ jobCreatedAt }}</p>
-          <button class="btn-check" :disabled="refreshing" @click="checkDelivered">
-            <span v-if="refreshing"><span class="btn-spinner dark" /> 检查中</span>
-            <span v-else> 刷新查看结果</span>
-          </button>
-          <p class="waiting-auto">页面每 {{ HUMAN_POLL_SECS }} 秒自动刷新</p>
-        </template>
+      <!-- 次数耗尽提示 -->
+      <div v-if="phase === 'wizard' && (tokenInfo?.remaining ?? 0) <= 0" class="wizard-body exhausted-body">
+        <div class="exhausted-icon">🎉</div>
+        <h2>次数已用完</h2>
+        <p>该 Token 的可用次数已全部使用，如需继续请联系服务商获取新的链接。</p>
       </div>
 
-      <!-- STEP 6: 结果展示 -->
-      <div v-if="phase === 'done'" class="wizard-body done-body">
-        <div class="done-badge">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      <!-- 历史处理记录 -->
+      <div v-if="historyJobs.length > 0" class="history-section">
+        <div class="history-hd">
+          <span class="history-title">处理历史</span>
+          <span class="history-count">{{ historyJobs.length }} 张</span>
         </div>
-        <h2 class="done-title">{{ isHuman ? '专业修复完成！' : 'AI 处理完成！' }}</h2>
-        <p class="done-desc">照片已处理完毕，可放大查看或点击下载保存。</p>
-        <div class="result-gallery">
-          <div v-for="asset in assets" :key="asset.id" class="result-item">
-            <div class="result-img-wrap" @click="openZoom(asset.download_url)">
-              <img v-if="isImage(asset.content_type)" :src="asset.download_url" class="result-img" :alt="asset.filename" />
-              <div class="result-zoom-hint">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/></svg>
-                点击放大
+        <div class="history-list">
+          <div v-for="job in historyJobs" :key="job.id" class="hc">
+            <!-- 成功：展示图片 -->
+            <template v-if="job.status === 'succeeded' && job.assets.length > 0">
+              <template
+                v-for="asset in job.assets"
+                :key="asset.id"
+              >
+                <div
+                  class="hc-img-wrap"
+                  @click="openZoom(asset.download_url)"
+                >
+                  <img
+                    v-if="isImage(asset.content_type)"
+                    :src="asset.download_url"
+                    class="hc-img"
+                    :alt="asset.filename"
+                    loading="lazy"
+                  />
+                  <div class="hc-zoom-hint">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/></svg>
+                    放大
+                  </div>
+                </div>
+                <div class="hc-actions">
+                  <a :href="asset.download_url" :download="asset.filename" class="hc-dl" @click.stop>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    下载
+                  </a>
+                </div>
+              </template>
+            </template>
+            <!-- 生成中：动画占位 -->
+            <div v-else-if="job.status === 'queued' || job.status === 'running'" class="hc-placeholder hc-processing">
+              <div class="hc-spinner-wrap">
+                <div class="hc-orbit hc-o1"><div class="hc-dot hc-d1"/></div>
+                <div class="hc-orbit hc-o2"><div class="hc-dot hc-d2"/></div>
+                <div class="hc-orbit-center">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                </div>
               </div>
+              <p class="hc-ph-text">{{ job.status === 'queued' ? '排队等待中…' : 'AI 处理中…' }}</p>
+              <p class="hc-ph-sub">{{ fmtDate(job.created_at) }}</p>
             </div>
-            <div class="result-actions">
-              <a :href="asset.download_url" :download="asset.filename" class="btn-download">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                下载图片
-              </a>
+            <!-- 失败：错误占位 -->
+            <div v-else-if="job.status === 'failed' || job.status === 'canceled'" class="hc-placeholder hc-failed">
+              <div class="hc-fail-icon">✕</div>
+              <p class="hc-ph-text">处理失败</p>
+              <p class="hc-ph-sub">{{ fmtDate(job.created_at) }}</p>
+            </div>
+            <!-- 成功但无 assets -->
+            <div v-else class="hc-placeholder hc-done-empty">
+              <div class="hc-fail-icon">📄</div>
+              <p class="hc-ph-text">已完成</p>
+              <p class="hc-ph-sub">{{ fmtDate(job.created_at) }}</p>
             </div>
           </div>
         </div>
-        <div v-if="(tokenInfo?.remaining ?? 0) > 0" class="done-more">
-          <button class="btn-again" @click="reset">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.63"/></svg>
-            再处理一张（剩余 {{ tokenInfo?.remaining }} 次）
-          </button>
-        </div>
-      </div>
-
-      <!-- 失败 -->
-      <div v-if="phase === 'failed'" class="wizard-body failed-body">
-        <div class="failed-icon"></div>
-        <h2>处理失败</h2>
-        <p>{{ jobError || '发生了未知错误，请联系服务商。' }}</p>
-        <button class="btn-again" @click="reset">重新尝试</button>
       </div>
     </template>
 
     <!-- 图片放大 Modal -->
-    <div v-if="zoomUrl" class="zoom-modal" @click.self="zoomUrl = null">
-      <div class="zoom-inner">
+    <div v-if="zoomUrl" class="zoom-modal" @click="zoomUrl = null">
+      <div class="zoom-inner" @click.stop>
         <button class="zoom-close" @click="zoomUrl = null">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
         <img :src="zoomUrl" class="zoom-image" alt="放大预览" />
-        <a :href="zoomUrl" download class="zoom-download">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          下载图片
-        </a>
       </div>
+      <a :href="zoomUrl" download class="zoom-download" @click.stop>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        下载图片
+      </a>
     </div>
   </div>
 </template>
@@ -288,15 +290,14 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  getTokenInfo, uploadFile, submitJob, getJobStatus,
-  type TokenInfo, type AssetOut, type ProjectInfo, type ProjectOptionGroup,
+  getTokenInfo, uploadFile, submitJob, getJobStatus, listJobsByToken,
+  type TokenInfo, type JobOut, type AssetOut, type ProjectInfo, type ProjectOptionGroup,
 } from '@/api/client'
 
 const route = useRoute()
 const tokenValue = route.params.token as string
-const HUMAN_POLL_SECS = 15
 
-type Phase = 'loading' | 'error' | 'wizard' | 'processing' | 'human-pending' | 'done' | 'failed'
+type Phase = 'loading' | 'error' | 'wizard'
 
 const phase = ref<Phase>('loading')
 const wizardStep = ref(1)
@@ -312,13 +313,10 @@ const singleChoiceMap = ref(new Map<string, string>())
 const userNote = ref('')
 const submitting = ref(false)
 const submitError = ref('')
-const jobStatus = ref('')
-const jobError = ref('')
-const assets = ref<AssetOut[]>([])
-const jobCreatedAt = ref('')
-const refreshing = ref(false)
-const currentJobId = ref<string | null>(null)
 const zoomUrl = ref<string | null>(null)
+
+// 历史 jobs
+const historyJobs = ref<JobOut[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const isHuman = computed(() => tokenInfo.value?.delivery_mode === 'human')
@@ -330,7 +328,6 @@ const stepLabels = computed(() => {
   base.push('填写需求', '确认提交')
   return base
 })
-const jobStatusText = computed(() => ({ queued: '排队等待中', running: 'AI 处理中' }[jobStatus.value] ?? '处理中'))
 
 onMounted(async () => {
   try {
@@ -344,7 +341,16 @@ onMounted(async () => {
         singleChoiceMap.value.set(g.id, String(g.default))
       }
     }
-    determineInitialPhase()
+    if (info.status !== 'active') {
+      phase.value = 'error'
+      errorMsg.value = info.status === 'revoked' ? 'Token 已吊销' : 'Token 已过期'
+      return
+    }
+    phase.value = 'wizard'
+    wizardStep.value = 1
+    // 加载历史
+    await loadHistory()
+    startHistoryPoll()
   } catch {
     phase.value = 'error'
     errorMsg.value = 'Token 无效或已过期，请联系服务商'
@@ -352,25 +358,32 @@ onMounted(async () => {
 })
 onUnmounted(() => stopPoll())
 
-function determineInitialPhase() {
-  const info = tokenInfo.value!
-  const job = info.latest_job
-  if (info.status !== 'active') {
-    phase.value = 'error'
-    errorMsg.value = info.status === 'revoked' ? 'Token 已吊销' : 'Token 已过期'
-    return
-  }
-  if (job) {
-    currentJobId.value = job.id
-    if (job.status === 'succeeded') { assets.value = job.assets; phase.value = 'done'; return }
-    if (job.status === 'failed' || job.status === 'canceled') { jobError.value = '处理失败，请联系服务商'; phase.value = 'failed'; return }
-    if (isHuman.value) { jobCreatedAt.value = fmtDate(job.created_at); phase.value = 'human-pending'; startHumanPoll(job.id) }
-    else { jobStatus.value = job.status; phase.value = 'processing'; startAutoPoll(job.id) }
-    return
-  }
-  if (info.remaining <= 0) { phase.value = 'error'; errorMsg.value = 'Token 可用次数已用完'; return }
-  phase.value = 'wizard'; wizardStep.value = 1
+async function loadHistory() {
+  try {
+    historyJobs.value = await listJobsByToken(tokenValue)
+  } catch { /* ignore */ }
 }
+
+function startHistoryPoll() {
+  pollTimer = setInterval(async () => {
+    const hasActive = historyJobs.value.some(j => j.status === 'queued' || j.status === 'running')
+    if (!hasActive) {
+      // 不需要轮询，但仍定期刷新以防万一
+    }
+    try {
+      const jobs = await listJobsByToken(tokenValue)
+      historyJobs.value = jobs
+      // 若有 job 完成，刷新 tokenInfo 更新剩余次数
+      const prevActive = historyJobs.value.filter(j => j.status === 'queued' || j.status === 'running').length
+      const nowActive = jobs.filter(j => j.status === 'queued' || j.status === 'running').length
+      if (prevActive > nowActive) {
+        tokenInfo.value = await getTokenInfo(tokenValue).catch(() => tokenInfo.value!)
+      }
+    } catch { /* ignore */ }
+  }, 3000)
+}
+
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 
 function triggerFileInput() { fileInput.value?.click() }
 function onFileChange(e: Event) { const f = (e.target as HTMLInputElement).files?.[0]; if (f) setFile(f) }
@@ -382,7 +395,7 @@ function toggleOption(id: string) { if (selectedOptions.value.has(id)) selectedO
 function setChoice(gid: string, cid: string) { singleChoiceMap.value.set(gid, cid); singleChoiceMap.value = new Map(singleChoiceMap.value) }
 function selectedChoice(gid: string) { return singleChoiceMap.value.get(gid) }
 function summarizeOption(group: ProjectOptionGroup): string {
-  if (group.type === 'toggle') return selectedOptions.value.has(group.id) ? ' 已开启' : '未开启'
+  if (group.type === 'toggle') return selectedOptions.value.has(group.id) ? '✓ 已开启' : '未开启'
   const cid = singleChoiceMap.value.get(group.id)
   return group.choices?.find(c => c.id === cid)?.label ?? '默认'
 }
@@ -399,40 +412,29 @@ async function handleSubmit() {
   try {
     const { object_key } = await uploadFile(tokenValue, selectedFile.value)
     const job = await submitJob(tokenValue, object_key, { selectedOptions: collectSelectedIds(), userNote: userNote.value })
-    currentJobId.value = job.id
-    if (isHuman.value) { jobCreatedAt.value = fmtDate(job.created_at); phase.value = 'human-pending'; startHumanPoll(job.id) }
-    else { jobStatus.value = job.status; phase.value = 'processing'; startAutoPoll(job.id) }
+    // 立即把新 job 插入历史顶部
+    historyJobs.value = [job, ...historyJobs.value]
+    // 刷新 tokenInfo 更新剩余次数
+    getTokenInfo(tokenValue).then(info => { tokenInfo.value = info }).catch(() => {})
+    // 重置表单，让用户可以继续提交
+    resetForm()
   } catch (e: unknown) { submitError.value = e instanceof Error ? e.message : '提交失败，请稍后重试' }
   finally { submitting.value = false }
 }
 
-function startAutoPoll(jobId: string) {
-  pollTimer = setInterval(async () => {
-    try {
-      const job = await getJobStatus(jobId)
-      jobStatus.value = job.status
-      if (job.status === 'succeeded') { stopPoll(); assets.value = job.assets; phase.value = 'done'; tokenInfo.value = await getTokenInfo(tokenValue).catch(() => tokenInfo.value!) }
-      else if (job.status === 'failed' || job.status === 'canceled') { stopPoll(); jobError.value = job.error ?? '处理失败'; phase.value = 'failed' }
-    } catch { /* ignore */ }
-  }, 2000)
-}
-function startHumanPoll(jobId: string) { pollTimer = setInterval(() => silentCheck(jobId), HUMAN_POLL_SECS * 1000) }
-async function silentCheck(jobId: string) {
-  try {
-    const job = await getJobStatus(jobId)
-    if (job.status === 'succeeded') { stopPoll(); assets.value = job.assets; phase.value = 'done'; tokenInfo.value = await getTokenInfo(tokenValue).catch(() => tokenInfo.value!) }
-    else if (job.status === 'failed' || job.status === 'canceled') { stopPoll(); jobError.value = '处理失败'; phase.value = 'failed' }
-  } catch { /* ignore */ }
-}
-async function checkDelivered() { if (!currentJobId.value) return; refreshing.value = true; await silentCheck(currentJobId.value); refreshing.value = false }
-function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
-
-function reset() {
-  stopPoll(); clearFile()
+function resetForm() {
+  clearFile()
   selectedOptions.value = new Set()
-  for (const g of optionGroups.value) { if (g.type === 'single_choice' && g.default) singleChoiceMap.value.set(g.id, String(g.default)) }
-  userNote.value = ''; assets.value = []; currentJobId.value = null; submitError.value = ''; wizardStep.value = 1; phase.value = 'wizard'
+  singleChoiceMap.value = new Map()
+  for (const g of optionGroups.value) {
+    if (g.type === 'toggle' && g.default) selectedOptions.value.add(g.id)
+    else if (g.type === 'single_choice' && g.default) singleChoiceMap.value.set(g.id, String(g.default))
+  }
+  userNote.value = ''
+  submitError.value = ''
+  wizardStep.value = 1
 }
+
 function openZoom(url: string) { zoomUrl.value = url }
 function isImage(ct: string | null) { return !ct || ct.startsWith('image/') }
 function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
@@ -638,13 +640,70 @@ function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
 .failed-icon { font-size: 3rem; }
 .failed-body h2 { font-size: 1.4rem; font-weight: 700; }
 .failed-body p { color: var(--text-soft); }
-.zoom-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; padding: 16px; }
-.zoom-inner { position: relative; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; gap: 10px; }
-.zoom-close { position: absolute; top: -10px; right: -10px; width: 32px; height: 32px; background: white; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #374151; box-shadow: 0 2px 8px rgba(0,0,0,0.3); z-index: 1; }
-.zoom-image { max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 8px; display: block; }
-.zoom-download { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; border-radius: 10px; background: white; color: var(--text); text-decoration: none; font-weight: 600; font-size: 0.88rem; align-self: center; }
+.zoom-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px 16px; }
+.zoom-inner { position: relative; display: inline-flex; }
+.zoom-close { position: absolute; top: -12px; right: -12px; width: 32px; height: 32px; background: white; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #374151; box-shadow: 0 2px 8px rgba(0,0,0,0.3); z-index: 1; }
+.zoom-image { max-width: 90vw; max-height: calc(90vh - 70px); object-fit: contain; border-radius: 8px; display: block; }
+.zoom-download { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; border-radius: 10px; background: white; color: var(--text); text-decoration: none; font-weight: 600; font-size: 0.88rem; }
 .btn-spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.4); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
 .btn-spinner.dark { border-color: rgba(0,0,0,0.2); border-top-color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.7)} }
+
+/* ── 历史记录 ───────────────────────────────────────────────────── */
+.history-section {
+  width: 100%; max-width: 640px; padding: 0 20px 40px;
+}
+.history-hd {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+}
+.history-title { font-size: 1rem; font-weight: 700; color: var(--text); }
+.history-count { font-size: 0.78rem; background: var(--accent); color: white; border-radius: 20px; padding: 2px 9px; font-weight: 600; }
+.history-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px;
+}
+.hc { border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); background: white; }
+.hc-img-wrap { position: relative; cursor: zoom-in; background: #f9f5ff; }
+.hc-img { width: 100%; height: 160px; object-fit: cover; display: block; }
+.hc-zoom-hint {
+  position: absolute; inset: 0; background: rgba(0,0,0,0); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px; color: white; font-size: 0.78rem;
+  font-weight: 600; opacity: 0; transition: all 0.2s;
+}
+.hc-img-wrap:hover .hc-zoom-hint { background: rgba(0,0,0,0.4); opacity: 1; }
+.hc-actions { padding: 8px 10px; }
+.hc-dl {
+  display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white;
+  font-size: 0.78rem; font-weight: 600; text-decoration: none;
+}
+/* 占位卡片 */
+.hc-placeholder {
+  height: 190px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; padding: 16px;
+}
+.hc-processing { background: linear-gradient(135deg, #F5F3FF, #FDF2F8); }
+.hc-failed { background: #FEF2F2; }
+.hc-done-empty { background: #F0FDF4; }
+.hc-ph-text { font-size: 0.83rem; font-weight: 600; color: var(--text); text-align: center; }
+.hc-ph-sub { font-size: 0.72rem; color: var(--text-soft); text-align: center; }
+/* 处理中小动画 */
+.hc-spinner-wrap { position: relative; width: 56px; height: 56px; }
+.hc-orbit { position: absolute; inset: 0; border-radius: 50%; border: 2px solid transparent; }
+.hc-o1 { border-color: rgba(139,92,246,0.25); animation: spin 2.5s linear infinite; }
+.hc-o2 { inset: 10px; border-color: rgba(236,72,153,0.25); animation: spin 1.8s linear infinite reverse; }
+.hc-orbit-center {
+  position: absolute; inset: 18px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+}
+.hc-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; top: -3px; left: calc(50% - 3px); }
+.hc-d1 { background: var(--accent); }
+.hc-d2 { background: var(--accent2); }
+.hc-fail-icon { font-size: 1.5rem; }
+/* 次数耗尽 */
+.exhausted-body { align-items: center; text-align: center; gap: 12px; padding-top: 40px; }
+.exhausted-icon { font-size: 3rem; }
+.exhausted-body h2 { font-size: 1.4rem; font-weight: 700; }
+.exhausted-body p { color: var(--text-soft); max-width: 300px; line-height: 1.6; }
 </style>

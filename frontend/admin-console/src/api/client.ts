@@ -170,6 +170,9 @@ export const listJobs = (status?: string, skillId?: string, limit = 50, offset =
 export const getJob = (id: string) =>
   request<Job>(`${BASE}/jobs/${id}`)
 
+export const retryJob = (id: string) =>
+  request<Job>(`${BASE}/jobs/${id}/retry`, { method: 'POST' })
+
 // ── Projects ─────────────────────────────────────────────────────────
 export interface Project {
   id: string

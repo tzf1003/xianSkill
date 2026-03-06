@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -24,11 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def execute_job(job_id_str: str) -> None:
-    """RQ task 入口（同步）。"""
-    asyncio.run(_run(job_id_str))
+    """RQ task 入口（同步），兼容独立 worker 进程。"""
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(run_job(job_id_str))
 
 
-async def _run(job_id_str: str) -> None:
+async def run_job(job_id_str: str) -> None:
+    """可直接 await 的异步入口，供 FastAPI BackgroundTasks 调用。"""
     engine = create_async_engine(settings.DATABASE_URL)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     storage = StorageService()

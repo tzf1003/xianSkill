@@ -5,15 +5,15 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 
 from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, ProjectOut, UploadOut
-from app.core.deps import DbSession, get_queue, get_storage
+from app.core.deps import DbSession, get_storage
 from app.domain.models import Job, JobStatus, Project, Skill, SKU
 from app.infra.storage import StorageService
 from app.services import job_service, token_service
-from app.tasks.execute_job import execute_job
+from app.tasks.execute_job import run_job
 
 router = APIRouter(prefix="/v1/public", tags=["public"])
 
@@ -120,7 +120,7 @@ async def upload_file(
 async def submit_job(
     body: JobSubmit,
     db: DbSession,
-    queue=Depends(get_queue),
+    background_tasks: BackgroundTasks,
 ) -> ApiResponse:
     """提交 Job：带 token + inputs + 可选 idempotency_key。
 
@@ -141,13 +141,13 @@ async def submit_job(
     await db.commit()
     await db.refresh(job)
 
-    # 仅 auto 模式的新建排队 Job 才入队 worker
+    # 仅 auto 模式的新建排队 Job 才触发执行
     if job.status == JobStatus.queued:
         sku_stmt = select(SKU).where(SKU.id == token.sku_id)
         sku = (await db.execute(sku_stmt)).scalar_one_or_none()
         is_human = sku and sku.delivery_mode.value == "human"
         if not is_human:
-            queue.enqueue(execute_job, str(job.id))
+            background_tasks.add_task(run_job, str(job.id))
 
     return ApiResponse(data=_job_out(job).model_dump(mode="json"))
 
@@ -165,6 +165,25 @@ async def get_job(
 
     out = _job_out(job, storage)
     return ApiResponse(data=out.model_dump(mode="json"))
+
+
+@router.get("/jobs")
+async def list_jobs_by_token(
+    token_value: str,
+    db: DbSession,
+    storage: StorageService = Depends(get_storage),
+) -> ApiResponse:
+    """查询该 token 下所有 Job（按创建时间倒序），含 assets 预签名 URL。"""
+    from app.domain.models import Token as TokenModel
+    token_row = (await db.execute(select(TokenModel).where(TokenModel.token == token_value))).scalar_one_or_none()
+    if not token_row:
+        raise HTTPException(status_code=404, detail="Token not found")
+    jobs = sorted(token_row.jobs, key=lambda j: j.created_at, reverse=True)
+    try:
+        storage_svc = StorageService()
+    except Exception:
+        storage_svc = None
+    return ApiResponse(data=[_job_out(j, storage_svc).model_dump(mode="json") for j in jobs])
 
 
 @router.get("/projects")

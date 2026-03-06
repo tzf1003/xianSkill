@@ -36,8 +36,14 @@
             <td><code class="tiny">{{ j.skill_id.slice(0,8) }}…</code></td>
             <td>{{ fmt(j.created_at) }}</td>
             <td>{{ duration(j) }}</td>
-            <td>
+            <td style="display:flex;gap:6px;align-items:center;">
               <button class="btn btn-secondary btn-sm" @click="openDetail(j)">详情</button>
+              <button
+                v-if="j.status !== 'succeeded'"
+                class="btn btn-warning btn-sm"
+                :disabled="retrying === j.id"
+                @click.stop="handleRetry(j.id)"
+              >{{ retrying === j.id ? '处理中…' : '▶ 重新处理' }}</button>
             </td>
           </tr>
         </tbody>
@@ -80,6 +86,13 @@
             <a v-if="a.download_url" :href="a.download_url" target="_blank" class="btn btn-secondary btn-sm">下载</a>
           </div>
         </div>
+        <div v-if="detail.status !== 'succeeded'" style="margin-top:12px;">
+          <button
+            class="btn btn-warning"
+            :disabled="retrying === detail.id"
+            @click="handleRetry(detail.id)"
+          >{{ retrying === detail.id ? '处理中…' : '▶ 立即重新处理' }}</button>
+        </div>
       </div>
     </Modal>
   </div>
@@ -87,7 +100,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { listJobs, getJob, type Job } from '@/api/client'
+import { listJobs, getJob, retryJob, type Job } from '@/api/client'
 import Modal from '@/components/Modal.vue'
 
 const items = ref<Job[]>([])
@@ -100,6 +113,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / 20)))
 const showDetail = ref(false)
 const detail = ref<Job | null>(null)
 const selectedId = ref<string | null>(null)
+const retrying = ref<string | null>(null)
 
 async function load() {
   const r = await listJobs(statusFilter.value || undefined, undefined, 20, offset.value)
@@ -110,6 +124,21 @@ async function openDetail(j: Job) {
   selectedId.value = j.id
   detail.value = await getJob(j.id)
   showDetail.value = true
+}
+
+async function handleRetry(id: string) {
+  retrying.value = id
+  try {
+    await retryJob(id)
+    await load()
+    if (detail.value?.id === id) {
+      detail.value = await getJob(id)
+    }
+  } catch (e: any) {
+    alert('重新处理失败：' + (e.message ?? e))
+  } finally {
+    retrying.value = null
+  }
 }
 
 function duration(j: Job) {
@@ -148,4 +177,8 @@ onMounted(load)
   white-space: pre-wrap; word-break: break-all; font-family: monospace; color: var(--text);
 }
 .asset-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--bg); border-radius: 8px; font-size: .85rem; border: 1px solid var(--border); }
+.btn-warning { background: #f59e0b; color: #fff; border: none; border-radius: 8px; padding: 6px 14px; font-size: .85rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+.btn-warning:hover:not(:disabled) { background: #d97706; }
+.btn-warning:disabled { opacity: .6; cursor: not-allowed; }
+.btn-warning.btn-sm { padding: 4px 10px; font-size: .8rem; }
 </style>

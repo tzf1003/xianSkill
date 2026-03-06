@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -570,6 +570,35 @@ async def get_job(job_id: uuid.UUID, db: DbSession) -> ApiResponse:
     except Exception:
         storage = None
     return ApiResponse(data=_job_out(job, storage).model_dump(mode="json"))
+
+
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(
+    job_id: uuid.UUID,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
+) -> ApiResponse:
+    """手动重新触发 Job 执行（queued/running/failed 均可重试）。"""
+    from app.tasks.execute_job import run_job
+    from datetime import datetime, timezone
+
+    job = await job_service.get_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status == JobStatus.succeeded:
+        raise HTTPException(status_code=409, detail="Job already succeeded")
+
+    # 重置为 queued 状态
+    job.status = JobStatus.queued
+    job.started_at = None
+    job.finished_at = None
+    job.error = None
+    job.log_text = None
+    await db.commit()
+    await db.refresh(job)
+
+    background_tasks.add_task(run_job, str(job.id))
+    return ApiResponse(data=JobOut.model_validate(job).model_dump(mode="json"))
 
 
 @router.post("/jobs/{job_id}/finalize")

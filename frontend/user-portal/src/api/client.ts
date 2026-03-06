@@ -132,6 +132,10 @@ export function getJobStatus(jobId: string): Promise<JobOut> {
   return request<JobOut>(`${BASE}/job/${jobId}`)
 }
 
+export function listJobsByToken(token: string): Promise<JobOut[]> {
+  return request<JobOut[]>(`${BASE}/jobs?token_value=${encodeURIComponent(token)}`)
+}
+
 export function listProjects(): Promise<ProjectInfo[]> {
   return request<ProjectInfo[]>(`${BASE}/projects`)
 }

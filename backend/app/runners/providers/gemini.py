@@ -60,10 +60,11 @@ class GeminiProvider(BaseProvider):
         contents.append(prompt)
 
         logger.info(
-            "Gemini 请求: model=%s, has_image=%s, prompt_len=%d",
+            "Gemini 请求: model=%s, has_image=%s, prompt_len=%d, prompt_preview=%s",
             settings.GEMINI_IMAGE_MODEL,
             image_bytes is not None,
             len(prompt),
+            prompt[:200],
         )
 
         response = client.models.generate_content(
@@ -88,25 +89,19 @@ class GeminiProvider(BaseProvider):
                 result_img.save(buf, format="PNG")
                 return buf.getvalue()
 
-        # Gemini 没有返回图像时，记录文本响应并返回原图的 PNG 副本（降级处理）
+        # Gemini 没有返回图像 — 抛出异常让 Job 明确失败，不再静默降级返回原图
         text_parts = [
             p.text
             for p in response.candidates[0].content.parts
             if hasattr(p, "text") and p.text
         ]
-        logger.warning(
-            "Gemini 未返回图像，文本响应: %s",
-            " | ".join(text_parts)[:200],
+        text_preview = " | ".join(text_parts)[:300]
+        logger.error(
+            "Gemini 未返回图像！model=%s, 文本响应: %s",
+            settings.GEMINI_IMAGE_MODEL,
+            text_preview,
         )
-
-        if image_bytes:
-            img_fallback = Image.open(io.BytesIO(image_bytes))
-            buf = io.BytesIO()
-            img_fallback.save(buf, format="PNG")
-            return buf.getvalue()
-
-        # 既没有图像也没有原始输入，生成占位图
-        placeholder = Image.new("RGB", (512, 512), color=(230, 230, 230))
-        buf = io.BytesIO()
-        placeholder.save(buf, format="PNG")
-        return buf.getvalue()
+        raise RuntimeError(
+            f"Gemini 未返回图像数据（model={settings.GEMINI_IMAGE_MODEL}）。"
+            f"请确认模型支持图像输出，并检查 prompt 是否合规。文本响应: {text_preview[:200]}"
+        )
