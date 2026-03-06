@@ -58,11 +58,17 @@ class StorageService:
         )
 
     def presigned_get_url(self, object_key: str, expires_seconds: int = 3600) -> str:
-        return self.client.presigned_get_object(
+        url = self.client.presigned_get_object(
             self.bucket,
             object_key,
             expires=timedelta(seconds=expires_seconds),
         )
+        public_base = settings.MINIO_PUBLIC_BASE
+        if public_base:
+            # 将 http(s)://host:port 替换为公共前缀（如 /minio）
+            import re
+            url = re.sub(r'^https?://[^/]+', public_base.rstrip('/'), url)
+        return url
 
 
 def get_storage() -> StorageService:

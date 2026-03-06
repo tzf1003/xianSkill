@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "skill-assets"
     MINIO_SECURE: bool = False
+    # 若设置，预签名 URL 的 http(s)://host:port 前缀将被替换为此值
+    # 例如 /minio，配合前端反代使用
+    MINIO_PUBLIC_BASE: str = ""
 
     # --- AI API 格式选择 ---
     # 可选值: gemini | openai | anthropic
