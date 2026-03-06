@@ -87,28 +87,91 @@ async def run_job(job_id_str: str) -> None:
         # 标记运行中
         job.status = JobStatus.running
         job.started_at = datetime.now(timezone.utc)
-        await session.commit()
         job_logs.append(_entry("job_status_changed", status="running"))
+        job.log_text = json.dumps(job_logs, ensure_ascii=False)
+        await session.commit()
 
+        _MAX_RETRIES = 3
+        _TIMEOUT_SECONDS = 180  # 3 分钟
+
+        run_result = None
         try:
-            t_runner = time.perf_counter()
-            runner = PromptRunner()
-            run_result = await asyncio.to_thread(
-                runner.run,
-                job_id=str(job.id),
-                skill={
-                    "prompt_template": combined_prompt,
-                    "runner_config": skill_row.runner_config or {},
-                },
-                inputs=job.inputs or {},
-                storage=storage,
-            )
-            runner_ms = round((time.perf_counter() - t_runner) * 1000, 1)
-            job_logs.append(_entry(
-                "runner_done",
-                duration_ms=runner_ms,
-                asset_count=len(run_result.assets),
-            ))
+            for attempt in range(1, _MAX_RETRIES + 1):
+                t_runner = time.perf_counter()
+                try:
+                    job_logs.append(_entry(
+                        "runner_attempt_start",
+                        attempt=attempt,
+                        max_retries=_MAX_RETRIES,
+                        timeout_seconds=_TIMEOUT_SECONDS,
+                    ))
+                    job.log_text = json.dumps(job_logs, ensure_ascii=False)
+                    await session.commit()
+                    runner = PromptRunner()
+                    run_result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            runner.run,
+                            job_id=str(job.id),
+                            skill={
+                                "prompt_template": combined_prompt,
+                                "runner_config": skill_row.runner_config or {},
+                            },
+                            inputs=job.inputs or {},
+                            storage=storage,
+                        ),
+                        timeout=_TIMEOUT_SECONDS,
+                    )
+                    runner_ms = round((time.perf_counter() - t_runner) * 1000, 1)
+                    job_logs.append(_entry(
+                        "runner_attempt_done",
+                        attempt=attempt,
+                        duration_ms=runner_ms,
+                        asset_count=len(run_result.assets),
+                    ))
+                    job.log_text = json.dumps(job_logs, ensure_ascii=False)
+                    await session.commit()
+                    break  # 成功，退出重试循环
+
+                except asyncio.TimeoutError:
+                    elapsed_ms = round((time.perf_counter() - t_runner) * 1000, 1)
+                    job_logs.append(_entry(
+                        "runner_attempt_timeout",
+                        attempt=attempt,
+                        max_retries=_MAX_RETRIES,
+                        timeout_seconds=_TIMEOUT_SECONDS,
+                        elapsed_ms=elapsed_ms,
+                    ))
+                    job.log_text = json.dumps(job_logs, ensure_ascii=False)
+                    await session.commit()
+                    logger.warning(
+                        "Job %s 第 %d/%d 次超时（%.0f ms）",
+                        job_id_str, attempt, _MAX_RETRIES, elapsed_ms,
+                    )
+                    if attempt >= _MAX_RETRIES:
+                        raise RuntimeError(
+                            f"AI 处理超时（{_TIMEOUT_SECONDS}s），已重试 {_MAX_RETRIES} 次，放弃"
+                        ) from None
+                    await asyncio.sleep(2)
+
+                except Exception as attempt_exc:
+                    elapsed_ms = round((time.perf_counter() - t_runner) * 1000, 1)
+                    job_logs.append(_entry(
+                        "runner_attempt_failed",
+                        attempt=attempt,
+                        max_retries=_MAX_RETRIES,
+                        error=str(attempt_exc),
+                        error_type=type(attempt_exc).__name__,
+                        elapsed_ms=elapsed_ms,
+                    ))
+                    job.log_text = json.dumps(job_logs, ensure_ascii=False)
+                    await session.commit()
+                    logger.warning(
+                        "Job %s 第 %d/%d 次失败: %s",
+                        job_id_str, attempt, _MAX_RETRIES, attempt_exc,
+                    )
+                    if attempt >= _MAX_RETRIES:
+                        raise
+                    await asyncio.sleep(2)
 
             # 合并 Runner 的详细日志（JSON list）到 job_logs
             try:

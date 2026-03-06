@@ -239,8 +239,8 @@
                 </div>
               </template>
             </template>
-            <!-- 生成中：动画占位 -->
-            <div v-else-if="job.status === 'queued' || job.status === 'running'" class="hc-placeholder hc-processing">
+            <!-- 生成中：覆盖全图的遮罩进度条 -->
+            <div v-else-if="job.status === 'queued' || job.status === 'running'" class="hc-processing-mask">
               <div class="hc-spinner-wrap">
                 <div class="hc-orbit hc-o1"><div class="hc-dot hc-d1"/></div>
                 <div class="hc-orbit hc-o2"><div class="hc-dot hc-d2"/></div>
@@ -248,13 +248,20 @@
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
                 </div>
               </div>
-              <p class="hc-ph-text">{{ job.status === 'queued' ? 'AI思考中...' : 'AI 处理中…' }}</p>
+              <p class="hc-ph-text">{{ job.status === 'queued' ? 'AI 排队中…' : 'AI 正在处理图片…' }}</p>
+              <div class="hc-progress-wrap">
+                <div class="hc-progress-track">
+                  <div class="hc-progress-fill" :style="{ width: (progressMap.get(job.id) ?? 2) + '%' }" />
+                </div>
+                <span class="hc-progress-pct">{{ progressMap.get(job.id) ?? 2 }}%</span>
+              </div>
               <p class="hc-ph-sub">{{ fmtDate(job.created_at) }}</p>
             </div>
             <!-- 失败：错误占位 -->
-            <div v-else-if="job.status === 'failed' || job.status === 'canceled'" class="hc-placeholder hc-failed">
+            <div v-else-if="job.status === 'failed' || job.status === 'canceled'" class="hc-failed-mask">
               <div class="hc-fail-icon">✕</div>
-              <p class="hc-ph-text">处理失败</p>
+              <p class="hc-ph-text">处理失败，请重试</p>
+              <p class="hc-ph-sub">多次失败请联系管理员</p>
               <p class="hc-ph-sub">{{ fmtDate(job.created_at) }}</p>
             </div>
             <!-- 成功但无 assets -->
@@ -318,6 +325,8 @@ const zoomUrl = ref<string | null>(null)
 // 历史 jobs
 const historyJobs = ref<JobOut[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let progressTimer: ReturnType<typeof setInterval> | null = null
+const progressMap = ref(new Map<string, number>())
 
 const isHuman = computed(() => tokenInfo.value?.delivery_mode === 'human')
 const optionGroups = computed<ProjectOptionGroup[]>(() => projectInfo.value?.options?.option_groups ?? [])
@@ -364,17 +373,44 @@ async function loadHistory() {
   } catch { /* ignore */ }
 }
 
-function startHistoryPoll() {
-  pollTimer = setInterval(async () => {
-    const hasActive = historyJobs.value.some(j => j.status === 'queued' || j.status === 'running')
-    if (!hasActive) {
-      // 不需要轮询，但仍定期刷新以防万一
+// ── 心理学进度条 ─────────────────────────────────────────────────
+// 曲线设计：前30s指数加速(0→~67%)，后90s线性慢爬(67→99%)，超120s封顶99%
+function calcProgress(elapsedSec: number): number {
+  if (elapsedSec <= 0) return 2
+  if (elapsedSec <= 30) {
+    return Math.min(67, Math.round(70 * (1 - Math.exp(-elapsedSec / 9))))
+  }
+  const extra = Math.min(elapsedSec - 30, 90) / 90
+  return Math.min(99, Math.round(67 + 32 * extra))
+}
+
+function updateProgressMap() {
+  const now = Date.now()
+  const next = new Map<string, number>()
+  for (const job of historyJobs.value) {
+    if (job.status === 'queued') {
+      next.set(job.id, 2)
+    } else if (job.status === 'running') {
+      const startMs = job.started_at
+        ? new Date(job.started_at).getTime()
+        : new Date(job.created_at).getTime()
+      next.set(job.id, calcProgress((now - startMs) / 1000))
     }
+  }
+  progressMap.value = next
+}
+
+function startHistoryPoll() {
+  updateProgressMap()
+  progressTimer = setInterval(updateProgressMap, 300)
+
+  pollTimer = setInterval(async () => {
     try {
+      const prevActive = historyJobs.value.filter(j => j.status === 'queued' || j.status === 'running').length
       const jobs = await listJobsByToken(tokenValue)
       historyJobs.value = jobs
+      updateProgressMap()
       // 若有 job 完成，刷新 tokenInfo 更新剩余次数
-      const prevActive = historyJobs.value.filter(j => j.status === 'queued' || j.status === 'running').length
       const nowActive = jobs.filter(j => j.status === 'queued' || j.status === 'running').length
       if (prevActive > nowActive) {
         tokenInfo.value = await getTokenInfo(tokenValue).catch(() => tokenInfo.value!)
@@ -383,7 +419,10 @@ function startHistoryPoll() {
   }, 3000)
 }
 
-function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+function stopPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
 
 function triggerFileInput() { fileInput.value?.click() }
 function onFileChange(e: Event) { const f = (e.target as HTMLInputElement).files?.[0]; if (f) setFile(f) }
@@ -438,6 +477,8 @@ function resetForm() {
 function openZoom(url: string) { zoomUrl.value = url }
 function isImage(ct: string | null) { return !ct || ct.startsWith('image/') }
 function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
+
+
 </script>
 
 <style scoped>
@@ -662,7 +703,7 @@ function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
 .history-list {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px;
 }
-.hc { border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); background: white; }
+.hc { border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); background: white; position: relative; min-height: 190px; }
 .hc-img-wrap { position: relative; cursor: zoom-in; background: #f9f5ff; }
 .hc-img { width: 100%; height: 160px; object-fit: cover; display: block; }
 .hc-zoom-hint {
@@ -671,7 +712,7 @@ function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
   font-weight: 600; opacity: 0; transition: all 0.2s;
 }
 .hc-img-wrap:hover .hc-zoom-hint { background: rgba(0,0,0,0.4); opacity: 1; }
-.hc-actions { padding: 8px 10px; }
+.hc-actions { padding: 8px 10px; display: flex; justify-content: center; }
 .hc-dl {
   display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 8px;
   background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white;
@@ -679,11 +720,56 @@ function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
 }
 /* 占位卡片 */
 .hc-placeholder {
-  height: 190px; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 8px; padding: 16px;
+  min-height: 190px; height: auto; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; padding: 18px 14px;
 }
-.hc-processing { background: linear-gradient(135deg, #F5F3FF, #FDF2F8); }
+/* 处理中：全覆盖遮罩 */
+.hc-processing-mask {
+  position: absolute;
+  inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  padding: 18px 14px;
+  background: linear-gradient(135deg, rgba(139,92,246,0.22), rgba(236,72,153,0.16));
+  backdrop-filter: blur(2px);
+}
+/* 进度条 */
+.hc-progress-wrap {
+  width: 100%; display: flex; align-items: center; gap: 8px; margin-top: 2px;
+}
+.hc-progress-track {
+  flex: 1; height: 6px; background: rgba(139,92,246,0.15); border-radius: 99px; overflow: hidden;
+}
+.hc-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 99px;
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+.hc-progress-fill::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%);
+  animation: shimmer 1.8s infinite;
+  background-size: 200% 100%;
+}
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+.hc-progress-pct {
+  flex-shrink: 0; font-size: 0.72rem; font-weight: 700;
+  color: var(--accent); min-width: 30px; text-align: right;
+}
 .hc-failed { background: #FEF2F2; }
+/* 失败遮罩：全覆盖 */
+.hc-failed-mask {
+  position: absolute;
+  inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  padding: 18px 14px;
+  background: rgba(254, 242, 242, 0.92);
+  backdrop-filter: blur(2px);
+}
 .hc-done-empty { background: #F0FDF4; }
 .hc-ph-text { font-size: 0.83rem; font-weight: 600; color: var(--text); text-align: center; }
 .hc-ph-sub { font-size: 0.72rem; color: var(--text-soft); text-align: center; }
