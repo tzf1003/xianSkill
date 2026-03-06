@@ -4,9 +4,41 @@
 
 const BASE = '/api/v1/public'
 
+// ── 项目选项类型 ──────────────────────────────────────────────────────
+export interface ProjectOptionChoice {
+  id: string
+  label: string
+  icon?: string
+  description?: string
+  prompt_addition?: string
+}
+
+export interface ProjectOptionGroup {
+  id: string
+  label: string
+  description?: string
+  type: 'toggle' | 'single_choice'
+  default: boolean | string
+  icon?: string
+  prompt_addition?: string   // toggle 类型用
+  choices?: ProjectOptionChoice[]  // single_choice 类型用
+}
+
+export interface ProjectInfo {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  cover_url: string | null
+  type: string
+  options: { option_groups: ProjectOptionGroup[] } | null
+  enabled: boolean
+  created_at: string
+}
+
 export interface TokenInfo {
   token: string
-  skill: { id: string; name: string; description: string | null }
+  skill: { id: string; name: string; description: string | null; project_id: string | null }
   sku_name: string
   /** 'auto' | 'human' */
   delivery_mode: string
@@ -23,6 +55,8 @@ export interface TokenInfo {
     finished_at: string | null
     assets: AssetOut[]
   } | null
+  /** 若 skill 绑定了项目，则返回项目信息 */
+  project: ProjectInfo | null
 }
 
 export interface UploadOut {
@@ -73,19 +107,35 @@ export function uploadFile(token: string, file: File): Promise<UploadOut> {
 export function submitJob(
   token: string,
   imageKey: string,
-  idempotencyKey?: string,
+  opts?: {
+    idempotencyKey?: string
+    selectedOptions?: string[]
+    userNote?: string
+  },
 ): Promise<JobOut> {
   return request<JobOut>(`${BASE}/job`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       token,
-      idempotency_key: idempotencyKey,
-      inputs: { image_key: imageKey },
+      idempotency_key: opts?.idempotencyKey,
+      inputs: {
+        image_key: imageKey,
+        selected_options: opts?.selectedOptions ?? [],
+        user_note: opts?.userNote ?? '',
+      },
     }),
   })
 }
 
 export function getJobStatus(jobId: string): Promise<JobOut> {
   return request<JobOut>(`${BASE}/job/${jobId}`)
+}
+
+export function listProjects(): Promise<ProjectInfo[]> {
+  return request<ProjectInfo[]>(`${BASE}/projects`)
+}
+
+export function getProject(slug: string): Promise<ProjectInfo> {
+  return request<ProjectInfo>(`${BASE}/projects/${slug}`)
 }

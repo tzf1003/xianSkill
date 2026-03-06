@@ -49,6 +49,13 @@
             <option v-for="sk in skills" :key="sk.id" :value="sk.id">{{ sk.name }}</option>
           </select>
         </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>所属项目</label>
+          <select v-model="form.project_id">
+            <option :value="null">— 不绑定项目 —</option>
+            <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+        </div>
         <div class="form-group">
           <label>价格（分）</label>
           <input v-model.number="form.price_cents" type="number" min="0" />
@@ -76,11 +83,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { listSKUs, createSKU, updateSKU, listSkills as apiListSkills, type SKU, type Skill } from '@/api/client'
+import { listSKUs, createSKU, updateSKU, listSkills as apiListSkills, listProjects, type SKU, type Skill, type Project } from '@/api/client'
 import Modal from '@/components/Modal.vue'
 
 const items = ref<SKU[]>([])
 const skills = ref<Skill[]>([])
+const projects = ref<Project[]>([])
 const total = ref(0)
 const offset = ref(0)
 const page = computed(() => Math.floor(offset.value / 20) + 1)
@@ -91,18 +99,18 @@ const editing = ref<SKU | null>(null)
 const saving = ref(false)
 const err = ref('')
 
-const defaultForm = () => ({ name: '', skill_id: '', price_cents: 0, total_uses: 1, delivery_mode: 'auto' })
+const defaultForm = () => ({ name: '', skill_id: '', project_id: null as string | null, price_cents: 0, total_uses: 1, delivery_mode: 'auto' })
 const form = ref(defaultForm())
 
 async function load() {
-  const [r, s] = await Promise.all([listSKUs(undefined, 20, offset.value), apiListSkills(200)])
-  items.value = r.items; total.value = r.total; skills.value = s.items
+  const [r, s, p] = await Promise.all([listSKUs(undefined, 20, offset.value), apiListSkills(200), listProjects(200)])
+  items.value = r.items; total.value = r.total; skills.value = s.items; projects.value = p.items
 }
 
 function openCreate() { editing.value = null; form.value = defaultForm(); err.value = ''; showModal.value = true }
 function openEdit(s: SKU) {
   editing.value = s
-  form.value = { name: s.name, skill_id: s.skill_id, price_cents: s.price_cents, total_uses: s.total_uses, delivery_mode: s.delivery_mode }
+  form.value = { name: s.name, skill_id: s.skill_id, project_id: s.project_id ?? null, price_cents: s.price_cents, total_uses: s.total_uses, delivery_mode: s.delivery_mode }
   err.value = ''; showModal.value = true
 }
 
@@ -111,7 +119,7 @@ async function handleSave() {
   saving.value = true; err.value = ''
   try {
     if (editing.value) await updateSKU(editing.value.id, form.value)
-    else await createSKU(form.value as { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number })
+    else await createSKU(form.value as { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null })
     showModal.value = false; await load()
   } catch (e: unknown) { err.value = e instanceof Error ? e.message : '操作失败' }
   finally { saving.value = false }

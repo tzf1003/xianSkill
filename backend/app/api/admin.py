@@ -16,6 +16,9 @@ from app.api.schemas import (
     JobOut,
     OrderCreate,
     OrderOut,
+    ProjectCreate,
+    ProjectOut,
+    ProjectUpdate,
     SKUCreate,
     SKUOut,
     SKUUpdate,
@@ -23,6 +26,7 @@ from app.api.schemas import (
     SkillOut,
     SkillUpdate,
     StatsOut,
+    TokenCreate,
     TokenOut,
     WebhookCreate,
     WebhookOut,
@@ -36,6 +40,7 @@ from app.domain.models import (
     Job,
     JobStatus,
     Order,
+    Project,
     SKU,
     Skill,
     SkillType,
@@ -102,6 +107,76 @@ async def get_stats(db: DbSession) -> ApiResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Projects
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/projects")
+async def list_projects(
+    db: DbSession,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ApiResponse:
+    result = await db.execute(
+        select(Project).order_by(Project.created_at.desc()).limit(limit).offset(offset)
+    )
+    projects = result.scalars().all()
+    total = (await db.execute(select(func.count()).select_from(Project))).scalar_one()
+    return ApiResponse(data={
+        "total": total,
+        "items": [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects],
+    })
+
+
+@router.post("/projects")
+async def create_project(body: ProjectCreate, db: DbSession) -> ApiResponse:
+    existing = (await db.execute(select(Project).where(Project.slug == body.slug))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Slug '{body.slug}' already exists")
+    project = Project(
+        name=body.name,
+        slug=body.slug,
+        description=body.description,
+        cover_url=body.cover_url,
+        type=body.type,
+        options=body.options,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return ApiResponse(data=ProjectOut.model_validate(project).model_dump(mode="json"))
+
+
+@router.get("/projects/{project_id}")
+async def get_project(project_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return ApiResponse(data=ProjectOut.model_validate(project).model_dump(mode="json"))
+
+
+@router.patch("/projects/{project_id}")
+async def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: DbSession) -> ApiResponse:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(project, field, value)
+    await db.commit()
+    await db.refresh(project)
+    return ApiResponse(data=ProjectOut.model_validate(project).model_dump(mode="json"))
+
+
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await db.delete(project)
+    await db.commit()
+    return ApiResponse(data={"deleted": str(project_id)})
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Skills
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -133,6 +208,7 @@ async def create_skill(body: SkillCreate, db: DbSession) -> ApiResponse:
         output_schema=body.output_schema,
         prompt_template=body.prompt_template,
         runner_config=body.runner_config,
+        project_id=body.project_id,
     )
     db.add(skill)
     await db.commit()
@@ -180,17 +256,22 @@ async def disable_skill(skill_id: uuid.UUID, db: DbSession) -> ApiResponse:
 async def list_skus(
     db: DbSession,
     skill_id: uuid.UUID | None = Query(None),
+    project_id: uuid.UUID | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> ApiResponse:
     stmt = select(SKU).order_by(SKU.created_at.desc())
     if skill_id:
         stmt = stmt.where(SKU.skill_id == skill_id)
+    if project_id:
+        stmt = stmt.join(Skill, SKU.skill_id == Skill.id).where(Skill.project_id == project_id)
     result = await db.execute(stmt.limit(limit).offset(offset))
     skus = result.scalars().all()
     count_stmt = select(func.count()).select_from(SKU)
     if skill_id:
         count_stmt = count_stmt.where(SKU.skill_id == skill_id)
+    if project_id:
+        count_stmt = count_stmt.join(Skill, SKU.skill_id == Skill.id).where(Skill.project_id == project_id)
     total = (await db.execute(count_stmt)).scalar_one()
     return ApiResponse(data={
         "total": total,
@@ -211,6 +292,7 @@ async def create_sku(body: SKUCreate, db: DbSession) -> ApiResponse:
         total_uses=body.total_uses,
         human_sla_hours=body.human_sla_hours,
         human_price_cents=body.human_price_cents,
+        project_id=body.project_id,
     )
     db.add(sku)
     await db.commit()
@@ -345,6 +427,7 @@ async def get_order(order_id: uuid.UUID, db: DbSession) -> ApiResponse:
 async def list_tokens(
     db: DbSession,
     status: str | None = Query(None),
+    project_id: uuid.UUID | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> ApiResponse:
@@ -354,11 +437,15 @@ async def list_tokens(
             stmt = stmt.where(Token.status == TokenStatus(status))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+    if project_id:
+        stmt = stmt.join(Skill, Token.skill_id == Skill.id).where(Skill.project_id == project_id)
     result = await db.execute(stmt.limit(limit).offset(offset))
     tokens = result.scalars().all()
     count_stmt = select(func.count()).select_from(Token)
     if status:
         count_stmt = count_stmt.where(Token.status == TokenStatus(status))
+    if project_id:
+        count_stmt = count_stmt.join(Skill, Token.skill_id == Skill.id).where(Skill.project_id == project_id)
     total = (await db.execute(count_stmt)).scalar_one()
     items = []
     for t in tokens:
@@ -388,6 +475,47 @@ async def revoke_token(token_id: uuid.UUID, db: DbSession) -> ApiResponse:
     token.status = TokenStatus.revoked
     await db.commit()
     return ApiResponse(data={"id": str(token_id), "status": "revoked"})
+
+
+@router.post("/tokens")
+async def create_token_direct(body: TokenCreate, db: DbSession) -> ApiResponse:
+    """手动创建 Token（自动建立 manual 订单，无需走下单流程）。"""
+    sku = await db.get(SKU, body.sku_id)
+    if not sku:
+        raise HTTPException(status_code=404, detail="SKU not found")
+
+    # 自动创建 manual 订单
+    order = Order(sku_id=body.sku_id, channel=body.channel or "manual")
+    db.add(order)
+    await db.flush()
+
+    uses = body.total_uses if body.total_uses is not None else sku.total_uses
+    token = await token_service.create_token(
+        db,
+        order_id=order.id,
+        sku_id=sku.id,
+        skill_id=sku.skill_id,
+        total_uses=uses,
+        expires_at=body.expires_at,
+    )
+    await db.commit()
+    await db.refresh(token)
+
+    out = TokenOut(
+        id=token.id,
+        token=token.token,
+        order_id=token.order_id,
+        sku_id=token.sku_id,
+        skill_id=token.skill_id,
+        status=token.status.value,
+        total_uses=token.total_uses,
+        used_count=token.used_count,
+        reserved_count=token.reserved_count,
+        remaining=token.remaining,
+        expires_at=token.expires_at,
+        created_at=token.created_at,
+    )
+    return ApiResponse(data=out.model_dump(mode="json"))
 
 
 # ═══════════════════════════════════════════════════════════════════════

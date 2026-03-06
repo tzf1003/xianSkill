@@ -14,7 +14,7 @@ export interface Skill {
 export interface SKU {
   id: string; skill_id: string; name: string
   price_cents: number; delivery_mode: string; total_uses: number
-  enabled: boolean; created_at: string
+  enabled: boolean; created_at: string; project_id: string | null
 }
 
 export interface Order {
@@ -119,12 +119,12 @@ export const disableSkill = (id: string) =>
   request<{ id: string; enabled: boolean }>(`${BASE}/skills/${id}`, { method: 'DELETE' })
 
 // ── SKUs ──────────────────────────────────────────────────────────────
-export const listSKUs = (skillId?: string, limit = 50, offset = 0) => {
-  const q = skillId ? `&skill_id=${skillId}` : ''
-  return request<PageResult<SKU>>(`${BASE}/skus?limit=${limit}&offset=${offset}${q}`)
+export const listSKUs = (skillId?: string, limit = 50, offset = 0, projectId?: string) => {
+  const q = [skillId ? `skill_id=${skillId}` : '', projectId ? `project_id=${projectId}` : ''].filter(Boolean).join('&')
+  return request<PageResult<SKU>>(`${BASE}/skus?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
 }
 
-export const createSKU = (body: { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number }) =>
+export const createSKU = (body: { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null }) =>
   request<SKU>(`${BASE}/skus`, json('POST', body))
 
 export const updateSKU = (id: string, body: Partial<SKU>) =>
@@ -138,13 +138,23 @@ export const createOrder = (body: { sku_id: string; channel?: string }) =>
   request<Order>(`${BASE}/orders`, json('POST', body))
 
 // ── Tokens ────────────────────────────────────────────────────────────
-export const listTokens = (status?: string, limit = 50, offset = 0) => {
-  const q = status ? `&status=${status}` : ''
-  return request<PageResult<Token>>(`${BASE}/tokens?limit=${limit}&offset=${offset}${q}`)
+export const listTokens = (status?: string, limit = 50, offset = 0, projectId?: string) => {
+  const q = [status ? `status=${status}` : '', projectId ? `project_id=${projectId}` : ''].filter(Boolean).join('&')
+  return request<PageResult<Token>>(`${BASE}/tokens?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
 }
 
 export const revokeToken = (id: string) =>
   request<{ id: string; status: string }>(`${BASE}/tokens/${id}`, { method: 'DELETE' })
+
+export interface TokenCreate {
+  sku_id: string
+  total_uses?: number
+  expires_at?: string | null
+  channel?: string
+}
+
+export const createToken = (body: TokenCreate) =>
+  request<Token>(`${BASE}/tokens`, json('POST', body))
 
 // ── Jobs ──────────────────────────────────────────────────────────────
 export const listJobs = (status?: string, skillId?: string, limit = 50, offset = 0) => {
@@ -159,3 +169,38 @@ export const listJobs = (status?: string, skillId?: string, limit = 50, offset =
 
 export const getJob = (id: string) =>
   request<Job>(`${BASE}/jobs/${id}`)
+
+// ── Projects ─────────────────────────────────────────────────────────
+export interface Project {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  cover_url: string | null
+  type: string
+  options: Record<string, unknown> | null
+  enabled: boolean
+  created_at: string
+}
+
+export interface ProjectCreate {
+  name: string
+  slug: string
+  description?: string
+  cover_url?: string
+  type?: string
+  options?: Record<string, unknown>
+  enabled?: boolean
+}
+
+export const listProjects = (limit = 50, offset = 0) =>
+  request<{ total: number; items: Project[] }>(`${BASE}/projects?limit=${limit}&offset=${offset}`)
+
+export const createProject = (body: ProjectCreate) =>
+  request<Project>(`${BASE}/projects`, json('POST', body))
+
+export const updateProject = (id: string, body: Partial<ProjectCreate>) =>
+  request<Project>(`${BASE}/projects/${id}`, json('PATCH', body))
+
+export const deleteProject = (id: string) =>
+  request<{ id: string; enabled: boolean }>(`${BASE}/projects/${id}`, { method: 'DELETE' })

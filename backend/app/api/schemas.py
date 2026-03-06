@@ -15,6 +15,39 @@ class ApiResponse(BaseModel):
     data: dict | list | None = None
 
 
+# ── Project ──────────────────────────────────────────────────────────
+class ProjectCreate(BaseModel):
+    name: str = Field(..., max_length=200)
+    slug: str = Field(..., max_length=100, pattern=r"^[a-z0-9-]+$")
+    description: str | None = None
+    cover_url: str | None = None
+    type: str = "photo_restore"
+    options: dict | None = None  # 选项组 JSON（见 Project 模型注释）
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    cover_url: str | None = None
+    type: str | None = None
+    options: dict | None = None
+    enabled: bool | None = None
+
+
+class ProjectOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    description: str | None
+    cover_url: str | None
+    type: str
+    options: dict | None
+    enabled: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── Skill ─────────────────────────────────────────────────────────────
 class SkillCreate(BaseModel):
     name: str = Field(..., max_length=200)
@@ -25,6 +58,7 @@ class SkillCreate(BaseModel):
     output_schema: dict | None = None
     prompt_template: str | None = None
     runner_config: dict | None = None
+    project_id: uuid.UUID | None = None
 
 
 class SkillOut(BaseModel):
@@ -34,6 +68,7 @@ class SkillOut(BaseModel):
     type: str
     version: str
     enabled: bool
+    project_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -48,6 +83,7 @@ class SKUCreate(BaseModel):
     total_uses: int = Field(1, ge=1)
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
+    project_id: uuid.UUID | None = None
 
 
 class SKUOut(BaseModel):
@@ -60,6 +96,7 @@ class SKUOut(BaseModel):
     enabled: bool
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
+    project_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -105,6 +142,7 @@ class TokenInfo(BaseModel):
     status: str
     expires_at: datetime | None
     latest_job: LatestJobBrief | None = None
+    project: "ProjectOut | None" = None  # 如果技能绑定了项目则返回项目定制化选项
 
     model_config = {"from_attributes": True}
 
@@ -159,6 +197,7 @@ class SkillUpdate(BaseModel):
     output_schema: dict | None = None
     prompt_template: str | None = None
     runner_config: dict | None = None
+    project_id: uuid.UUID | None = None
     enabled: bool | None = None
 
 
@@ -170,9 +209,18 @@ class SKUUpdate(BaseModel):
     enabled: bool | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
+    project_id: uuid.UUID | None = None
 
 
-# ── Admin: Token list ─────────────────────────────────────────────────
+# ── Admin: Token ─────────────────────────────────────────────────
+class TokenCreate(BaseModel):
+    """管理员手动创建 Token（自动建立 Manual 订单）。"""
+    sku_id: uuid.UUID
+    total_uses: int | None = None    # None 表示使用 SKU 默认值
+    expires_at: datetime | None = None
+    channel: str | None = "manual"
+
+
 class TokenOut(BaseModel):
     id: uuid.UUID
     token: str

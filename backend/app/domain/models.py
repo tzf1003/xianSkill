@@ -74,6 +74,49 @@ class TimestampMixin:
     )
 
 
+# ── Project ───────────────────────────────────────────────────────────
+class Project(Base, TimestampMixin):
+
+
+        {
+          "option_groups": [
+            {
+              "id": "colorize",
+              "label": "添加彩色效果",
+              "description": "将黑白老照片智能上色",
+              "type": "toggle",          // "toggle" | "single_choice"
+              "default": false,
+              "icon": "🎨",
+              "prompt_addition": "对照片进行智能上色，让黑白照片重现彩色生机"
+            },
+            {
+              "id": "repair_mode",
+              "label": "修复方案",
+              "type": "single_choice",
+              "default": "default",
+              "choices": [
+                {"id": "default", "label": "默认版", "icon": "✨", "prompt_addition": ""},
+                {"id": "heavy",   "label": "重度破损修复", "icon": "🔧", "prompt_addition": "..."}
+              ]
+            }
+          ]
+        }
+    """
+
+    __tablename__ = "projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=False, default="photo_restore")
+    options: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="定制化选项组配置 JSON")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    skus: Mapped[list["SKU"]] = relationship("SKU", back_populates="project", lazy="selectin")
+
+
 # ── Skill ─────────────────────────────────────────────────────────────
 class Skill(Base, TimestampMixin):
     __tablename__ = "skills"
@@ -89,7 +132,7 @@ class Skill(Base, TimestampMixin):
     prompt_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     runner_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    skus: Mapped[list[SKU]] = relationship("SKU", back_populates="skill", lazy="selectin")
+    skus: Mapped[list["SKU"]] = relationship("SKU", back_populates="skill", lazy="selectin")
 
 
 # ── SKU ───────────────────────────────────────────────────────────────
@@ -107,11 +150,16 @@ class SKU(Base, TimestampMixin):
     )
     total_uses: Mapped[int] = mapped_column(Integer, default=1, comment="该 SKU 允许使用的总次数")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True,
+        comment="该 SKU 属于哪个项目（决定运行时加载哪个 Project 的选项配置）"
+    )
     # ── 人工协助扩展字段 ─────────────────────────────────────────────
     human_sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="人工处理 SLA（小时）")
     human_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="人工服务附加定价（分）")
 
     skill: Mapped[Skill] = relationship("Skill", back_populates="skus")
+    project: Mapped["Project | None"] = relationship("Project", back_populates="skus", lazy="selectin")
     orders: Mapped[list[Order]] = relationship("Order", back_populates="sku", lazy="selectin")
 
     __table_args__ = (Index("ix_skus_skill_id", "skill_id"),)

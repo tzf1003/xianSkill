@@ -26,8 +26,15 @@
 前后端分离：
 
 ### 4.1 前端（Vue）
-- 用户交付页：打开 token URL，展示 Skill 信息、剩余次数、上传输入、提交 Job、查看结果。
-- 管理后台：Skill/SKU 管理、订单管理、Job 列表、资产查看、Webhook 配置（可逐步实现）。
+- 用户交付页：
+  - 首页（Home）：项目展示卡片 + Token 输入入口。
+  - Token 交付页（SkillDelivery）：6 步向导 UI，手机端先行。步骤：上传图片 → 项目定制选项 → 填写需求 → 确认提交 → 等待动画 → 结果放大/下载。
+- 管理后台：
+  - 登录页不展示侧边栏菜单，登录后才显示完整管理界面。
+  - Projects 管理：项目 CRUD，含选项组 JSON 编辑器。
+  - Skill/SKU 管理：关联项目。
+  - Tokens 管理：按项目过滤，支持手动新增（选项目 → SKU → 填写次数/过期时间）。
+  - 订单/Job/资产查看。
 
 ### 4.2 后端（Gateway + Worker）
 - Gateway（HTTP API）：
@@ -96,13 +103,23 @@ Runner 统一接口（面向对象）：
 
 ## 8. 数据库表（最小必需）
 必须有：
-- skills, skus, orders, tokens, jobs, assets
+- **projects**：`id, name, slug(unique), description, cover_url, type, options(JSON 含 option_groups), enabled, created_at, updated_at`
+- **skills**：含 `project_id`（FK → projects.id, nullable，SET NULL on delete）
+- skus, orders, tokens, jobs, assets
 可后续添加：
 - connectors, webhooks, audit_logs, workflow_steps
 
 ## 9. API 约定（REST + 可选 WebSocket）
 - /v1/public/... ：面向用户 token 使用（最小暴露）
-- /v1/admin/...  ：管理端（可加 API key/JWT）
+  - `GET /public/projects` — 列出启用的项目（含 option_groups）
+  - `GET /public/projects/{slug}` — 项目详情
+  - `GET /public/token/{token}` — Token 信息（含关联项目）
+  - `POST /public/upload` / `POST /public/job` / `GET /public/job/{id}`
+- /v1/admin/...  ：管理端（JWT 鉴权）
+  - Projects CRUD：`GET/POST /admin/projects`，`GET/PATCH/DELETE /admin/projects/{id}`
+  - `POST /admin/tokens` — 手动按项目新建 Token（自动创建 manual 订单）
+  - `GET /admin/tokens?project_id=xxx&status=active` — 按项目过滤 Token 列表
+  - `GET /admin/skus?project_id=xxx` — 按项目过滤 SKU 列表
 - 统一返回结构：{ code, message, data }
 - Job 状态机：queued -> running -> succeeded | failed | canceled
 

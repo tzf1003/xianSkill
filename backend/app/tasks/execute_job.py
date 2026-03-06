@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.models import Asset, Job, JobStatus, Skill, Token
+from app.domain.models import Asset, Job, JobStatus, SKU, Skill, Token
 from app.infra.storage import StorageService
 from app.runners.prompt_runner import PromptRunner
 
@@ -43,6 +43,11 @@ async def _run(job_id_str: str) -> None:
 
         skill_row = (await session.execute(select(Skill).where(Skill.id == job.skill_id))).scalar_one()
         token_row = (await session.execute(select(Token).where(Token.id == job.token_id))).scalar_one()
+        sku_row = (await session.execute(select(SKU).where(SKU.id == token_row.sku_id))).scalar_one_or_none()
+
+        # 构建最终 prompt：基础 prompt + 项目选项 prompt_addition + 用户自定义备注
+        base_prompt = skill_row.prompt_template or "Restore and enhance this image."
+        combined_prompt = _build_prompt(base_prompt, sku_row, job.inputs or {})
 
         # 标记运行中
         job.status = JobStatus.running
@@ -54,7 +59,7 @@ async def _run(job_id_str: str) -> None:
             run_result = runner.run(
                 job_id=str(job.id),
                 skill={
-                    "prompt_template": skill_row.prompt_template or "Restore this image.",
+                    "prompt_template": combined_prompt,
                     "runner_config": skill_row.runner_config or {},
                 },
                 inputs=job.inputs or {},
@@ -108,3 +113,48 @@ async def _run(job_id_str: str) -> None:
 async def _load_job(session: AsyncSession, job_id: uuid.UUID) -> Job | None:
     result = await session.execute(select(Job).where(Job.id == job_id))
     return result.scalar_one_or_none()
+
+
+def _build_prompt(base_prompt: str, sku_row: SKU | None, inputs: dict) -> str:
+    """根据用户选择的项目选项和备注，拼接最终 prompt。
+
+    inputs 中可包含：
+      - selected_options: list[str]  — 用户选择的选项 ID 列表
+      - user_note: str               — 用户自定义备注
+    """
+    parts = [base_prompt.strip()]
+
+    if sku_row and sku_row.project_id and sku_row.project:
+        project_options = (sku_row.project.options or {}).get("option_groups", [])
+        selected_ids: list[str] = inputs.get("selected_options", [])
+
+        for group in project_options:
+            gid = group.get("id", "")
+            gtype = group.get("type", "toggle")
+
+            if gtype == "toggle":
+                # 布尔选项：selected_options 中包含 group_id 表示已选中
+                if gid in selected_ids:
+                    addition = group.get("prompt_addition", "")
+                    if addition:
+                        parts.append(addition.strip())
+
+            elif gtype == "single_choice":
+                choices = group.get("choices", [])
+                # 在 selected_ids 中找到本组被选中的 choice_id
+                selected_choice_id = next(
+                    (sid for sid in selected_ids if any(c.get("id") == sid for c in choices)),
+                    group.get("default"),
+                )
+                if selected_choice_id:
+                    choice = next((c for c in choices if c.get("id") == selected_choice_id), None)
+                    if choice:
+                        addition = choice.get("prompt_addition", "")
+                        if addition:
+                            parts.append(addition.strip())
+
+    user_note = (inputs.get("user_note") or "").strip()
+    if user_note:
+        parts.append(f"用户特别要求：{user_note}")
+
+    return "。".join(filter(None, parts))

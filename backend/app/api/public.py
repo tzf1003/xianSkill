@@ -8,9 +8,9 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 
-from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, UploadOut
+from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, ProjectOut, UploadOut
 from app.core.deps import DbSession, get_queue, get_storage
-from app.domain.models import Job, JobStatus, Skill, SKU
+from app.domain.models import Job, JobStatus, Project, Skill, SKU
 from app.infra.storage import StorageService
 from app.services import job_service, token_service
 from app.tasks.execute_job import execute_job
@@ -65,6 +65,14 @@ async def get_token_info(token_value: str, db: DbSession) -> ApiResponse:
             assets=assets_out,
         )
 
+    # 查询项目（从 SKU 的 project_id 确定）
+    project_out = None
+    if sku and sku.project_id:
+        proj_stmt = select(Project).where(Project.id == sku.project_id)
+        project = (await db.execute(proj_stmt)).scalar_one_or_none()
+        if project:
+            project_out = ProjectOut.model_validate(project)
+
     info = TokenInfo(
         token=token.token,
         skill=SkillOut.model_validate(skill),
@@ -76,6 +84,7 @@ async def get_token_info(token_value: str, db: DbSession) -> ApiResponse:
         status=token.status.value,
         expires_at=token.expires_at,
         latest_job=latest_job,
+        project=project_out,
     )
     return ApiResponse(data=info.model_dump(mode="json"))
 
@@ -156,6 +165,24 @@ async def get_job(
 
     out = _job_out(job, storage)
     return ApiResponse(data=out.model_dump(mode="json"))
+
+
+@router.get("/projects")
+async def list_projects(db: DbSession) -> ApiResponse:
+    """列出所有已启用的项目（公开，无需 token）。"""
+    stmt = select(Project).where(Project.enabled.is_(True)).order_by(Project.created_at)
+    rows = (await db.execute(stmt)).scalars().all()
+    return ApiResponse(data=[ProjectOut.model_validate(r).model_dump(mode="json") for r in rows])
+
+
+@router.get("/projects/{slug}")
+async def get_project(slug: str, db: DbSession) -> ApiResponse:
+    """根据 slug 获取项目详情（公开，无需 token）。"""
+    stmt = select(Project).where(Project.slug == slug, Project.enabled.is_(True))
+    project = (await db.execute(stmt)).scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return ApiResponse(data=ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
 # ── 内部辅助 ─────────────────────────────────────────────────────────
