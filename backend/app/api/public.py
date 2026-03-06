@@ -6,22 +6,21 @@ import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy import select
 
-from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, TokenInfo, SkillOut, UploadOut
+from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, UploadOut
 from app.core.deps import DbSession, get_queue, get_storage
-from app.domain.models import JobStatus, Skill, SKU
+from app.domain.models import Job, JobStatus, Skill, SKU
 from app.infra.storage import StorageService
 from app.services import job_service, token_service
 from app.tasks.execute_job import execute_job
-
-from sqlalchemy import select
 
 router = APIRouter(prefix="/v1/public", tags=["public"])
 
 
 @router.get("/token/{token_value}")
 async def get_token_info(token_value: str, db: DbSession) -> ApiResponse:
-    """查询 token 绑定的 skill 信息、剩余次数、状态、过期时间。"""
+    """查询 token 绑定的 skill 信息、delivery_mode、剩余次数、状态、最新 Job。"""
     token = await token_service.get_token_by_value(db, token_value)
     if not token:
         raise HTTPException(status_code=404, detail="Token not found")
@@ -35,14 +34,48 @@ async def get_token_info(token_value: str, db: DbSession) -> ApiResponse:
     sku_stmt = select(SKU).where(SKU.id == token.sku_id)
     sku = (await db.execute(sku_stmt)).scalar_one_or_none()
 
+    # 查询最新 Job（按创建时间倒序）
+    latest_job = None
+    if token.jobs:
+        job = sorted(token.jobs, key=lambda j: j.created_at, reverse=True)[0]
+        try:
+            storage = StorageService()
+        except Exception:
+            storage = None
+        assets_out = [
+            AssetOut(
+                id=a.id,
+                filename=a.filename,
+                storage_key=a.storage_key,
+                content_type=a.content_type,
+                size_bytes=a.size_bytes,
+                download_url=(
+                    storage.presigned_get_url(a.storage_key)
+                    if storage and a.storage_key
+                    else ""
+                ),
+            )
+            for a in job.assets
+        ]
+        latest_job = LatestJobBrief(
+            id=job.id,
+            status=job.status.value if hasattr(job.status, "value") else str(job.status),
+            created_at=job.created_at,
+            finished_at=job.finished_at,
+            assets=assets_out,
+        )
+
     info = TokenInfo(
         token=token.token,
         skill=SkillOut.model_validate(skill),
         sku_name=sku.name if sku else "",
+        delivery_mode=sku.delivery_mode.value if sku else "auto",
+        human_sla_hours=sku.human_sla_hours if sku else None,
         total_uses=token.total_uses,
         remaining=token.remaining,
         status=token.status.value,
         expires_at=token.expires_at,
+        latest_job=latest_job,
     )
     return ApiResponse(data=info.model_dump(mode="json"))
 
@@ -80,7 +113,10 @@ async def submit_job(
     db: DbSession,
     queue=Depends(get_queue),
 ) -> ApiResponse:
-    """提交 Job：带 token + inputs + 可选 idempotency_key。"""
+    """提交 Job：带 token + inputs + 可选 idempotency_key。
+
+    human delivery_mode 的 Job 不进入 worker 队列，由管理员手动交付。
+    """
     token = await token_service.get_token_by_value(db, body.token)
     if not token:
         raise HTTPException(status_code=404, detail="Token not found")
@@ -96,9 +132,13 @@ async def submit_job(
     await db.commit()
     await db.refresh(job)
 
-    # 仅对新创建的排队 Job 入队（幂等重试不重复入队）
+    # 仅 auto 模式的新建排队 Job 才入队 worker
     if job.status == JobStatus.queued:
-        queue.enqueue(execute_job, str(job.id))
+        sku_stmt = select(SKU).where(SKU.id == token.sku_id)
+        sku = (await db.execute(sku_stmt)).scalar_one_or_none()
+        is_human = sku and sku.delivery_mode.value == "human"
+        if not is_human:
+            queue.enqueue(execute_job, str(job.id))
 
     return ApiResponse(data=_job_out(job).model_dump(mode="json"))
 

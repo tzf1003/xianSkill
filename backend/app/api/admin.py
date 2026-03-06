@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 
 from app.api.schemas import (
     ApiResponse,
+    DeliveryRecordOut,
     JobOut,
     OrderCreate,
     OrderOut,
@@ -20,10 +23,14 @@ from app.api.schemas import (
     SkillUpdate,
     StatsOut,
     TokenOut,
+    WebhookCreate,
+    WebhookOut,
 )
-from app.core.deps import DbSession
+from app.core.config import settings
+from app.core.deps import DbSession, get_storage
 from app.domain.models import (
     Asset,
+    DeliveryRecord,
     DeliveryMode,
     Job,
     JobStatus,
@@ -33,6 +40,7 @@ from app.domain.models import (
     SkillType,
     Token,
     TokenStatus,
+    Webhook,
 )
 from app.services import job_service, token_service
 
@@ -178,6 +186,8 @@ async def create_sku(body: SKUCreate, db: DbSession) -> ApiResponse:
         price_cents=body.price_cents,
         delivery_mode=DeliveryMode(body.delivery_mode),
         total_uses=body.total_uses,
+        human_sla_hours=body.human_sla_hours,
+        human_price_cents=body.human_price_cents,
     )
     db.add(sku)
     await db.commit()
@@ -250,6 +260,11 @@ async def create_order(body: OrderCreate, db: DbSession) -> ApiResponse:
     await db.refresh(order)
     await db.refresh(token)
 
+    # 订单创建即表示付款（paid），异步触发 webhook
+    skill = await db.get(Skill, sku.skill_id)
+    if skill:
+        asyncio.create_task(_fire_order_paid(db, order=order, token=token, sku=sku, skill=skill))
+
     out = OrderOut(
         id=order.id,
         sku_id=order.sku_id,
@@ -259,6 +274,23 @@ async def create_order(body: OrderCreate, db: DbSession) -> ApiResponse:
         created_at=order.created_at,
     )
     return ApiResponse(data=out.model_dump(mode="json"))
+
+
+async def _fire_order_paid(db, *, order, token, sku, skill) -> None:
+    """Webhook 广播（后台任务，不阻塞响应）。"""
+    try:
+        from app.infra.webhook import fire_order_paid
+        await fire_order_paid(
+            db,
+            order=order,
+            token=token,
+            sku=sku,
+            skill=skill,
+            base_url=settings.BASE_URL,
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("webhook fire failed: %s", exc)
 
 
 @router.get("/orders/{order_id}")
@@ -403,95 +435,159 @@ async def finalize_job(
     return ApiResponse(data=JobOut.model_validate(job).model_dump(mode="json"))
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Human Delivery
+# ═══════════════════════════════════════════════════════════════════════
 
-@router.post("/skills")
-async def create_skill(body: SkillCreate, db: DbSession) -> ApiResponse:
-    """创建 Skill（存 manifest）。"""
-    skill = Skill(
-        name=body.name,
-        description=body.description,
-        type=SkillType(body.type),
-        version=body.version,
-        input_schema=body.input_schema,
-        output_schema=body.output_schema,
-    )
-    db.add(skill)
-    await db.commit()
-    await db.refresh(skill)
-    return ApiResponse(data=SkillOut.model_validate(skill).model_dump(mode="json"))
-
-
-@router.post("/skus")
-async def create_sku(body: SKUCreate, db: DbSession) -> ApiResponse:
-    """创建 SKU。"""
-    # 校验 skill 存在
-    stmt = select(Skill).where(Skill.id == body.skill_id)
-    result = await db.execute(stmt)
-    skill = result.scalar_one_or_none()
-    if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    sku = SKU(
-        skill_id=body.skill_id,
-        name=body.name,
-        price_cents=body.price_cents,
-        delivery_mode=DeliveryMode(body.delivery_mode),
-        total_uses=body.total_uses,
-    )
-    db.add(sku)
-    await db.commit()
-    await db.refresh(sku)
-    return ApiResponse(data=SKUOut.model_validate(sku).model_dump(mode="json"))
-
-
-@router.post("/orders")
-async def create_order(body: OrderCreate, db: DbSession) -> ApiResponse:
-    """创建订单并自动生成 token，返回 token URL。"""
-    # 校验 SKU 存在并获取关联信息
-    stmt = select(SKU).where(SKU.id == body.sku_id)
-    result = await db.execute(stmt)
-    sku = result.scalar_one_or_none()
-    if not sku:
-        raise HTTPException(status_code=404, detail="SKU not found")
-
-    order = Order(
-        sku_id=body.sku_id,
-        channel=body.channel,
-    )
-    db.add(order)
-    await db.flush()  # 获取 order.id
-
-    token = await token_service.create_token(
-        db,
-        order_id=order.id,
-        sku_id=sku.id,
-        skill_id=sku.skill_id,
-        total_uses=sku.total_uses,
-    )
-    await db.commit()
-    await db.refresh(order)
-    await db.refresh(token)
-
-    out = OrderOut(
-        id=order.id,
-        sku_id=order.sku_id,
-        status=order.status.value,
-        channel=order.channel,
-        token_url=f"/v1/public/token/{token.token}",
-        created_at=order.created_at,
-    )
-    return ApiResponse(data=out.model_dump(mode="json"))
-
-
-@router.post("/jobs/{job_id}/finalize")
-async def finalize_job(
+@router.post("/jobs/{job_id}/human-deliver")
+async def human_deliver(
     job_id: uuid.UUID,
     db: DbSession,
-    success: bool = True,
-    error: str | None = None,
+    operator: str = Form(..., description="操作人姓名"),
+    notes: str | None = Form(None, description="备注"),
+    file: UploadFile = File(..., description="交付产物文件"),
 ) -> ApiResponse:
-    """手动 finalize Job（M1 测试用）。"""
-    job = await job_service.finalize_job(db, job_id, success=success, error=error)
+    """人工交付：上传产物文件，标记 Job 为 succeeded 并 finalize token 扣次。
+
+    审计要求（AGENT.md §6）：记录操作人、时间戳、产物 hash。
+    """
+    from app.infra.storage import StorageService
+    from app.api.public import _job_out
+
+    job = await job_service.get_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (JobStatus.queued, JobStatus.running):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job already in terminal state: {job.status.value}",
+        )
+
+    # 读文件 + 计 hash
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    output_hash = hashlib.sha256(data).hexdigest()
+
+    # 上传到对象存储
+    try:
+        storage = StorageService()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Storage unavailable: {exc}")
+
+    safe_name = (file.filename or "delivery").replace(" ", "_")
+    storage_key = f"deliveries/{job_id}/{safe_name}"
+    storage.put_bytes(storage_key, data, file.content_type or "application/octet-stream")
+
+    # 创建 Asset 记录
+    asset = Asset(
+        job_id=job_id,
+        filename=safe_name,
+        storage_key=storage_key,
+        content_type=file.content_type,
+        size_bytes=len(data),
+        hash=output_hash,
+    )
+    db.add(asset)
+
+    # 创建 DeliveryRecord（审计证据）
+    record = DeliveryRecord(
+        job_id=job_id,
+        operator=operator,
+        notes=notes,
+        output_hash=output_hash,
+    )
+    db.add(record)
+
+    # 通过 job_service 做状态机流转 + token finalize
+    await db.flush()
+    job = await job_service.finalize_job(
+        db, job_id, success=True, result={"delivered_by": operator}
+    )
     await db.commit()
     await db.refresh(job)
-    return ApiResponse(data=JobOut.model_validate(job).model_dump(mode="json"))
+
+    return ApiResponse(data=_job_out(job, storage).model_dump(mode="json"))
+
+
+@router.get("/jobs/{job_id}/delivery-record")
+async def get_delivery_record(job_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    """查询指定 Job 的人工交付记录（审计证据）。"""
+    result = await db.execute(
+        select(DeliveryRecord).where(DeliveryRecord.job_id == job_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="Delivery record not found")
+    return ApiResponse(data=DeliveryRecordOut.model_validate(record).model_dump(mode="json"))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Webhooks
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/webhooks")
+async def list_webhooks(db: DbSession) -> ApiResponse:
+    """列出所有 webhook 配置（不返回 secret）。"""
+    result = await db.execute(select(Webhook).order_by(Webhook.created_at.desc()))
+    webhooks = result.scalars().all()
+    return ApiResponse(data={
+        "items": [WebhookOut.model_validate(w).model_dump(mode="json") for w in webhooks],
+    })
+
+
+@router.post("/webhooks")
+async def create_webhook(body: WebhookCreate, db: DbSession) -> ApiResponse:
+    """注册一个新的 webhook endpoint。"""
+    wh = Webhook(
+        url=body.url,
+        secret=body.secret,
+        events=body.events,
+        description=body.description,
+    )
+    db.add(wh)
+    await db.commit()
+    await db.refresh(wh)
+    return ApiResponse(data=WebhookOut.model_validate(wh).model_dump(mode="json"))
+
+
+@router.put("/webhooks/{webhook_id}")
+async def update_webhook(
+    webhook_id: uuid.UUID,
+    body: WebhookCreate,
+    db: DbSession,
+) -> ApiResponse:
+    """更新 webhook 配置。"""
+    wh = await db.get(Webhook, webhook_id)
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    wh.url = body.url
+    wh.secret = body.secret
+    wh.events = body.events
+    wh.description = body.description
+    await db.commit()
+    await db.refresh(wh)
+    return ApiResponse(data=WebhookOut.model_validate(wh).model_dump(mode="json"))
+
+
+@router.delete("/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    """删除 webhook 配置。"""
+    wh = await db.get(Webhook, webhook_id)
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    await db.delete(wh)
+    await db.commit()
+    return ApiResponse(data={"id": str(webhook_id), "deleted": True})
+
+
+@router.post("/webhooks/{webhook_id}/disable")
+async def disable_webhook(webhook_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    """临时禁用某个 webhook（不删除）。"""
+    wh = await db.get(Webhook, webhook_id)
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    wh.enabled = False
+    await db.commit()
+    return ApiResponse(data={"id": str(webhook_id), "enabled": False})
+

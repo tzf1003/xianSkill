@@ -25,5 +25,9 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "skill-assets"
     MINIO_SECURE: bool = False
 
+    # --- Webhook ---
+    # 对外可访问的服务根 URL，用于生成 token_url 写入 webhook 通知
+    BASE_URL: str = "http://localhost:8000"
+
 
 settings = Settings()

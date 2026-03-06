@@ -107,6 +107,9 @@ class SKU(Base, TimestampMixin):
     )
     total_uses: Mapped[int] = mapped_column(Integer, default=1, comment="该 SKU 允许使用的总次数")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # ── 人工协助扩展字段 ─────────────────────────────────────────────
+    human_sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="人工处理 SLA（小时）")
+    human_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="人工服务附加定价（分）")
 
     skill: Mapped[Skill] = relationship("Skill", back_populates="skus")
     orders: Mapped[list[Order]] = relationship("Order", back_populates="sku", lazy="selectin")
@@ -201,6 +204,9 @@ class Job(Base, TimestampMixin):
 
     token: Mapped[Token] = relationship("Token", back_populates="jobs")
     assets: Mapped[list[Asset]] = relationship("Asset", back_populates="job", lazy="selectin")
+    delivery_record: Mapped[DeliveryRecord | None] = relationship(
+        "DeliveryRecord", back_populates="job", uselist=False, lazy="selectin"
+    )
 
     __table_args__ = (
         Index("ix_jobs_token_id", "token_id"),
@@ -225,3 +231,36 @@ class Asset(Base, TimestampMixin):
     job: Mapped[Job] = relationship("Job", back_populates="assets")
 
     __table_args__ = (Index("ix_assets_job_id", "job_id"),)
+
+
+# ── Webhook ───────────────────────────────────────────────────────────
+class Webhook(Base, TimestampMixin):
+    """Webhook 配置 — 订单付款等事件时向外部 URL 推送通知。"""
+
+    __tablename__ = "webhooks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    secret: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="HMAC-SHA256 签名密钥")
+    events: Mapped[list | None] = mapped_column(JSON, nullable=True, comment="订阅事件列表，null = 全部")
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+# ── DeliveryRecord ────────────────────────────────────────────────────
+class DeliveryRecord(Base, TimestampMixin):
+    """人工交付记录 — 操作审计证据（AGENT.md §6）。"""
+
+    __tablename__ = "delivery_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    operator: Mapped[str] = mapped_column(String(200), nullable=False, comment="操作人")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True, comment="备注")
+    output_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="产物 SHA-256")
+
+    job: Mapped[Job] = relationship("Job", back_populates="delivery_record")
+
+    __table_args__ = (Index("ix_delivery_records_job_id", "job_id"),)

@@ -46,6 +46,8 @@ class SKUCreate(BaseModel):
     price_cents: int = 0
     delivery_mode: str = Field("auto", pattern=r"^(auto|human)$")
     total_uses: int = Field(1, ge=1)
+    human_sla_hours: int | None = None
+    human_price_cents: int | None = None
 
 
 class SKUOut(BaseModel):
@@ -56,6 +58,8 @@ class SKUOut(BaseModel):
     delivery_mode: str
     total_uses: int
     enabled: bool
+    human_sla_hours: int | None = None
+    human_price_cents: int | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -79,14 +83,28 @@ class OrderOut(BaseModel):
 
 
 # ── Token ─────────────────────────────────────────────────────────────
+class LatestJobBrief(BaseModel):
+    """Token 关联的最新 Job 简要，为前端显示状态提供最小信息。"""
+    id: uuid.UUID
+    status: str
+    created_at: datetime
+    finished_at: datetime | None = None
+    assets: list["AssetOut"] = []
+
+    model_config = {"from_attributes": True}
+
+
 class TokenInfo(BaseModel):
     token: str
     skill: SkillOut
     sku_name: str
+    delivery_mode: str = "auto"
+    human_sla_hours: int | None = None
     total_uses: int
     remaining: int
     status: str
     expires_at: datetime | None
+    latest_job: LatestJobBrief | None = None
 
     model_config = {"from_attributes": True}
 
@@ -150,6 +168,8 @@ class SKUUpdate(BaseModel):
     delivery_mode: str | None = None
     total_uses: int | None = None
     enabled: bool | None = None
+    human_sla_hours: int | None = None
+    human_price_cents: int | None = None
 
 
 # ── Admin: Token list ─────────────────────────────────────────────────
@@ -169,6 +189,36 @@ class TokenOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+# ── Webhook ──────────────────────────────────────────────────────────────
+class WebhookCreate(BaseModel):
+    url: str = Field(..., max_length=2000)
+    secret: str | None = Field(None, max_length=500)
+    events: list[str] | None = None  # None = 订阅全部事件
+    description: str | None = Field(None, max_length=500)
+
+
+class WebhookOut(BaseModel):
+    id: uuid.UUID
+    url: str
+    events: list[str] | None
+    description: str | None
+    enabled: bool
+    created_at: datetime
+    # 注意：secret 不回显
+
+    model_config = {"from_attributes": True}
+
+
+# ── DeliveryRecord ─────────────────────────────────────────────────────
+class DeliveryRecordOut(BaseModel):
+    id: uuid.UUID
+    job_id: uuid.UUID
+    operator: str
+    notes: str | None
+    output_hash: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 # ── Admin: Stats ──────────────────────────────────────────────────────
 class StatsOut(BaseModel):

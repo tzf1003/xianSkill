@@ -8,10 +8,21 @@ export interface TokenInfo {
   token: string
   skill: { id: string; name: string; description: string | null }
   sku_name: string
+  /** 'auto' | 'human' */
+  delivery_mode: string
+  human_sla_hours: number | null
   total_uses: number
   remaining: number
   status: string
   expires_at: string | null
+  /** 最新 Job 摘要，用于显示人工处理进度 */
+  latest_job: {
+    id: string
+    status: string
+    created_at: string
+    finished_at: string | null
+    assets: AssetOut[]
+  } | null
 }
 
 export interface UploadOut {
