@@ -133,7 +133,7 @@ function openEdit(s: Skill) {
   editing.value = s
   form.value = {
     name: s.name, type: s.type, description: s.description ?? '',
-    version: s.version, prompt_template: '', enabled: s.enabled,
+    version: s.version, prompt_template: s.prompt_template ?? '', enabled: s.enabled,
   }
   err.value = ''
   showModal.value = true

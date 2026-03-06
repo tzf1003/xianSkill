@@ -2,20 +2,20 @@
 
 支持：
 - 图像处理模式：输入图像 + Prompt → 输出处理后的图像
-  model: GEMINI_IMAGE_MODEL（需支持 IMAGE 响应模态，如 gemini-2.0-flash-preview-image-generation）
-- 如果 Gemini 未返回图像（比如模型不支持），自动降级：将文本响应记录 log，
-  原图原样返回，并以 JPEG 格式输出（保证 PromptRunner 不崩溃）
+  model: GEMINI_IMAGE_MODEL（需支持 IMAGE 响应模态）
+- Gemini 未返回图像时抛出 RuntimeError，Job 明确标记为 failed，不静默降级返回原图
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import time
 
 from PIL import Image
 
 from app.core.config import settings
-from app.runners.providers.base import BaseProvider
+from app.runners.base import BaseProvider, ProviderResult
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class GeminiProvider(BaseProvider):
     """使用 Google Gemini API（google-genai SDK）处理图像。"""
 
-    def complete(self, prompt: str, image_bytes: bytes | None = None) -> bytes:
+    def complete(self, prompt: str, image_bytes: bytes | None = None) -> ProviderResult:
         if not settings.GEMINI_API_KEY:
             raise RuntimeError(
                 "GEMINI_API_KEY 未配置，请在 .env 中设置 GEMINI_API_KEY"
@@ -44,29 +44,34 @@ class GeminiProvider(BaseProvider):
 
         # 构建 contents
         contents: list = []
+        input_mime = ""
         if image_bytes:
             # 探测 MIME 类型
             try:
                 img_obj = Image.open(io.BytesIO(image_bytes))
                 fmt = (img_obj.format or "JPEG").upper()
-                mime_type = f"image/{fmt.lower()}"
+                input_mime = f"image/{fmt.lower()}"
             except Exception:
-                mime_type = "image/jpeg"
+                input_mime = "image/jpeg"
 
             contents.append(
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+                types.Part.from_bytes(data=image_bytes, mime_type=input_mime)
             )
 
         contents.append(prompt)
 
         logger.info(
-            "Gemini 请求: model=%s, has_image=%s, prompt_len=%d, prompt_preview=%s",
+            "Gemini 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, "
+            "prompt_len=%d\n--- PROMPT ---\n%s\n--- END PROMPT ---",
             settings.GEMINI_IMAGE_MODEL,
             image_bytes is not None,
+            input_mime,
+            len(image_bytes) if image_bytes else 0,
             len(prompt),
-            prompt[:200],
+            prompt,
         )
 
+        t0 = time.perf_counter()
         response = client.models.generate_content(
             model=settings.GEMINI_IMAGE_MODEL,
             contents=contents,
@@ -74,34 +79,82 @@ class GeminiProvider(BaseProvider):
                 response_modalities=["TEXT", "IMAGE"],
             ),
         )
+        duration_ms = (time.perf_counter() - t0) * 1000
 
-        # 从响应中提取图像数据
-        for part in response.candidates[0].content.parts:
+        # ── 检查 candidates ───────────────────────────────────────────
+        if not response.candidates:
+            # prompt_feedback 可能包含 SAFETY 屏蔽原因
+            feedback = getattr(response, "prompt_feedback", None)
+            block_reason = getattr(feedback, "block_reason", None) if feedback else None
+            raise RuntimeError(
+                f"Gemini 返回空 candidates（model={settings.GEMINI_IMAGE_MODEL}）。"
+                f"可能被安全策略屏蔽，block_reason={block_reason}"
+            )
+
+        candidate = response.candidates[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        finish_reason_str = str(finish_reason) if finish_reason else ""
+
+        # finish_reason: SAFETY / RECITATION / OTHER 表示被拒绝
+        if finish_reason and finish_reason_str not in ("FinishReason.STOP", "STOP", "1"):
+            raise RuntimeError(
+                f"Gemini 终止原因异常: finish_reason={finish_reason}（model={settings.GEMINI_IMAGE_MODEL}）。"
+                f"请检查图片内容或 prompt 是否触发了安全策略"
+            )
+
+        # content 可能为 None（safety block 时）
+        if candidate.content is None or not candidate.content.parts:
+            raise RuntimeError(
+                f"Gemini 返回空 content（model={settings.GEMINI_IMAGE_MODEL}, "
+                f"finish_reason={finish_reason}）"
+            )
+
+        # ── 从响应中提取图像数据 ──────────────────────────────────────
+        text_parts: list[str] = []
+        for part in candidate.content.parts:
             if part.inline_data and part.inline_data.mime_type.startswith("image/"):
+                response_mime = part.inline_data.mime_type
+                raw_size = len(part.inline_data.data)
                 logger.info(
-                    "Gemini 返回图像: mime=%s, size=%d bytes",
-                    part.inline_data.mime_type,
-                    len(part.inline_data.data),
+                    "Gemini 返回图像: mime=%s, raw_size=%d bytes, duration=%.0f ms",
+                    response_mime,
+                    raw_size,
+                    duration_ms,
                 )
                 # 统一转为 PNG 输出
                 result_img = Image.open(io.BytesIO(part.inline_data.data))
                 buf = io.BytesIO()
                 result_img.save(buf, format="PNG")
-                return buf.getvalue()
+                png_bytes = buf.getvalue()
+                logger.info(
+                    "Gemini 响应图像转换为 PNG: %d bytes", len(png_bytes)
+                )
+                return ProviderResult(
+                    image_bytes=png_bytes,
+                    model=settings.GEMINI_IMAGE_MODEL,
+                    finish_reason=finish_reason_str,
+                    response_text="",
+                    image_mime="image/png",
+                    prompt_len=len(prompt),
+                    input_image_bytes=len(image_bytes) if image_bytes else 0,
+                    output_image_bytes=len(png_bytes),
+                    duration_ms=round(duration_ms, 1),
+                    extra={"candidates_count": len(response.candidates), "input_mime": input_mime},
+                )
+            elif hasattr(part, "text") and part.text:
+                text_parts.append(part.text)
 
-        # Gemini 没有返回图像 — 抛出异常让 Job 明确失败，不再静默降级返回原图
-        text_parts = [
-            p.text
-            for p in response.candidates[0].content.parts
-            if hasattr(p, "text") and p.text
-        ]
+        # Gemini 只返回了文字，未返回图像 → 明确报错
         text_preview = " | ".join(text_parts)[:300]
         logger.error(
-            "Gemini 未返回图像！model=%s, 文本响应: %s",
+            "Gemini 未返回图像！model=%s, finish_reason=%s, duration=%.0f ms, 文本响应: %s",
             settings.GEMINI_IMAGE_MODEL,
+            finish_reason,
+            duration_ms,
             text_preview,
         )
         raise RuntimeError(
-            f"Gemini 未返回图像数据（model={settings.GEMINI_IMAGE_MODEL}）。"
-            f"请确认模型支持图像输出，并检查 prompt 是否合规。文本响应: {text_preview[:200]}"
+            f"Gemini 未返回图像数据（model={settings.GEMINI_IMAGE_MODEL}, "
+            f"finish_reason={finish_reason}）。"
+            f"Gemini 文字响应: {text_preview[:200]}"
         )

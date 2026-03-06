@@ -9,6 +9,7 @@ const BASE = '/api/v1/admin'
 export interface Skill {
   id: string; name: string; description: string | null
   type: string; version: string; enabled: boolean; created_at: string
+  prompt_template?: string | null
 }
 
 export interface SKU {

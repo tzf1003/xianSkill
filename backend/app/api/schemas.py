@@ -70,6 +70,8 @@ class SkillOut(BaseModel):
     type: str
     version: str
     enabled: bool
+    prompt_template: str | None = None
+    runner_config: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

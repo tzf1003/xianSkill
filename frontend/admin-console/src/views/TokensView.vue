@@ -219,7 +219,7 @@ async function doCreate() {
 }
 
 onMounted(async () => {
-  const [, pr] = await Promise.all([load(), listProjects(1000)])
+  const [, pr] = await Promise.all([load(), listProjects(200)])
   projects.value = pr.items
 })
 </script>

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import io
+import time
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.runners.providers.base import BaseProvider
+from app.runners.base import BaseProvider, ProviderResult
 
 
 class MockProvider(BaseProvider):
@@ -17,7 +18,8 @@ class MockProvider(BaseProvider):
     - 输出 PNG
     """
 
-    def complete(self, prompt: str, image_bytes: bytes | None = None) -> bytes:
+    def complete(self, prompt: str, image_bytes: bytes | None = None) -> ProviderResult:
+        t0 = time.perf_counter()
         if image_bytes:
             img = Image.open(io.BytesIO(image_bytes)).convert("L").convert("RGB")
         else:
@@ -29,4 +31,17 @@ class MockProvider(BaseProvider):
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        return buf.getvalue()
+        png_bytes = buf.getvalue()
+        duration_ms = (time.perf_counter() - t0) * 1000
+
+        return ProviderResult(
+            image_bytes=png_bytes,
+            model="mock",
+            finish_reason="STOP",
+            response_text="",
+            image_mime="image/png",
+            prompt_len=len(prompt),
+            input_image_bytes=len(image_bytes) if image_bytes else 0,
+            output_image_bytes=len(png_bytes),
+            duration_ms=round(duration_ms, 1),
+        )

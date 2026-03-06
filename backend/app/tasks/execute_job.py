@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -22,6 +23,16 @@ from app.infra.storage import StorageService
 from app.runners.prompt_runner import PromptRunner
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> str:
+    """返回 UTC ISO8601 毫秒时间戳字符串。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _entry(step: str, **kwargs) -> dict:
+    """构造一条结构化日志条目。"""
+    return {"ts": _now(), "step": step, **kwargs}
 
 
 def execute_job(job_id_str: str) -> None:
@@ -38,6 +49,10 @@ async def run_job(job_id_str: str) -> None:
     storage = StorageService()
 
     job_id = uuid.UUID(job_id_str)
+    job_logs: list[dict] = []
+    t_job_start = time.perf_counter()
+
+    job_logs.append(_entry("job_start", job_id=job_id_str))
 
     async with factory() as session:
         job = await _load_job(session, job_id)
@@ -49,16 +64,34 @@ async def run_job(job_id_str: str) -> None:
         token_row = (await session.execute(select(Token).where(Token.id == job.token_id))).scalar_one()
         sku_row = (await session.execute(select(SKU).where(SKU.id == token_row.sku_id))).scalar_one_or_none()
 
+        job_logs.append(_entry(
+            "job_context",
+            skill_id=str(job.skill_id),
+            skill_name=skill_row.name,
+            token_id=str(job.token_id),
+            sku_id=str(token_row.sku_id) if token_row else None,
+            inputs=job.inputs or {},
+        ))
+
         # 构建最终 prompt：基础 prompt + 项目选项 prompt_addition + 用户自定义备注
         base_prompt = skill_row.prompt_template or "Restore and enhance this image."
         combined_prompt = _build_prompt(base_prompt, sku_row, job.inputs or {})
+
+        job_logs.append(_entry(
+            "prompt_built",
+            base_prompt_len=len(base_prompt),
+            combined_prompt_len=len(combined_prompt),
+            combined_prompt=combined_prompt,
+        ))
 
         # 标记运行中
         job.status = JobStatus.running
         job.started_at = datetime.now(timezone.utc)
         await session.commit()
+        job_logs.append(_entry("job_status_changed", status="running"))
 
         try:
+            t_runner = time.perf_counter()
             runner = PromptRunner()
             run_result = runner.run(
                 job_id=str(job.id),
@@ -69,6 +102,21 @@ async def run_job(job_id_str: str) -> None:
                 inputs=job.inputs or {},
                 storage=storage,
             )
+            runner_ms = round((time.perf_counter() - t_runner) * 1000, 1)
+            job_logs.append(_entry(
+                "runner_done",
+                duration_ms=runner_ms,
+                asset_count=len(run_result.assets),
+            ))
+
+            # 合并 Runner 的详细日志（JSON list）到 job_logs
+            try:
+                runner_entries = json.loads(run_result.logs) if run_result.logs else []
+                if isinstance(runner_entries, list):
+                    job_logs.extend(runner_entries)
+            except Exception:
+                if run_result.logs:
+                    job_logs.append(_entry("runner_logs_raw", text=run_result.logs))
 
             # 持久化 assets
             for asset_data in run_result.assets:
@@ -87,9 +135,16 @@ async def run_job(job_id_str: str) -> None:
                 json.dumps(run_result.assets, sort_keys=True).encode()
             ).hexdigest()
 
+            total_ms = round((time.perf_counter() - t_job_start) * 1000, 1)
+            job_logs.append(_entry(
+                "job_succeeded",
+                output_hash=output_hash[:16] + "…",
+                total_duration_ms=total_ms,
+            ))
+
             job.status = JobStatus.succeeded
             job.result = {"assets": run_result.assets, "metadata": run_result.metadata}
-            job.log_text = run_result.logs
+            job.log_text = json.dumps(job_logs, ensure_ascii=False, indent=2)
             job.output_hash = output_hash
             job.finished_at = datetime.now(timezone.utc)
 
@@ -97,13 +152,21 @@ async def run_job(job_id_str: str) -> None:
             token_row.used_count += 1
             token_row.reserved_count = max(0, token_row.reserved_count - 1)
 
-            logger.info("Job %s succeeded", job_id_str)
+            logger.info("Job %s succeeded (%.0f ms)", job_id_str, total_ms)
 
         except Exception as exc:
+            total_ms = round((time.perf_counter() - t_job_start) * 1000, 1)
+            job_logs.append(_entry(
+                "job_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                total_duration_ms=total_ms,
+            ))
+
             logger.exception("Job %s failed: %s", job_id_str, exc)
             job.status = JobStatus.failed
             job.error = str(exc)
-            job.log_text = f"ERROR: {exc}"
+            job.log_text = json.dumps(job_logs, ensure_ascii=False, indent=2)
             job.finished_at = datetime.now(timezone.utc)
 
             # 归还预占
@@ -112,6 +175,56 @@ async def run_job(job_id_str: str) -> None:
         await session.commit()
 
     await engine.dispose()
+
+
+async def _load_job(session: AsyncSession, job_id: uuid.UUID) -> Job | None:
+    result = await session.execute(select(Job).where(Job.id == job_id))
+    return result.scalar_one_or_none()
+
+
+def _build_prompt(base_prompt: str, sku_row: SKU | None, inputs: dict) -> str:
+    """根据用户选择的项目选项和备注，拼接最终 prompt。
+
+    inputs 中可包含：
+      - selected_options: list[str]  — 用户选择的选项 ID 列表
+      - user_note: str               — 用户自定义备注
+    """
+    parts = [base_prompt.strip()]
+
+    if sku_row and sku_row.project_id and sku_row.project:
+        project_options = (sku_row.project.options or {}).get("option_groups", [])
+        selected_ids: list[str] = inputs.get("selected_options", [])
+
+        for group in project_options:
+            gid = group.get("id", "")
+            gtype = group.get("type", "toggle")
+
+            if gtype == "toggle":
+                # 布尔选项：selected_options 中包含 group_id 表示已选中
+                if gid in selected_ids:
+                    addition = group.get("prompt_addition", "")
+                    if addition:
+                        parts.append(addition.strip())
+
+            elif gtype == "single_choice":
+                choices = group.get("choices", [])
+                # 在 selected_ids 中找到本组被选中的 choice_id
+                selected_choice_id = next(
+                    (sid for sid in selected_ids if any(c.get("id") == sid for c in choices)),
+                    group.get("default"),
+                )
+                if selected_choice_id:
+                    choice = next((c for c in choices if c.get("id") == selected_choice_id), None)
+                    if choice:
+                        addition = choice.get("prompt_addition", "")
+                        if addition:
+                            parts.append(addition.strip())
+
+    user_note = (inputs.get("user_note") or "").strip()
+    if user_note:
+        parts.append(f"用户特别要求：{user_note}")
+
+    return "。".join(filter(None, parts))
 
 
 async def _load_job(session: AsyncSession, job_id: uuid.UUID) -> Job | None:
