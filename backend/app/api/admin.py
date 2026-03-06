@@ -139,6 +139,7 @@ async def create_project(body: ProjectCreate, db: DbSession) -> ApiResponse:
         cover_url=body.cover_url,
         type=body.type,
         options=body.options,
+        skill_id=body.skill_id,
     )
     db.add(project)
     await db.commit()
@@ -208,7 +209,6 @@ async def create_skill(body: SkillCreate, db: DbSession) -> ApiResponse:
         output_schema=body.output_schema,
         prompt_template=body.prompt_template,
         runner_config=body.runner_config,
-        project_id=body.project_id,
     )
     db.add(skill)
     await db.commit()
@@ -264,14 +264,14 @@ async def list_skus(
     if skill_id:
         stmt = stmt.where(SKU.skill_id == skill_id)
     if project_id:
-        stmt = stmt.join(Skill, SKU.skill_id == Skill.id).where(Skill.project_id == project_id)
+        stmt = stmt.where(SKU.project_id == project_id)
     result = await db.execute(stmt.limit(limit).offset(offset))
     skus = result.scalars().all()
     count_stmt = select(func.count()).select_from(SKU)
     if skill_id:
         count_stmt = count_stmt.where(SKU.skill_id == skill_id)
     if project_id:
-        count_stmt = count_stmt.join(Skill, SKU.skill_id == Skill.id).where(Skill.project_id == project_id)
+        count_stmt = count_stmt.where(SKU.project_id == project_id)
     total = (await db.execute(count_stmt)).scalar_one()
     return ApiResponse(data={
         "total": total,
@@ -438,14 +438,14 @@ async def list_tokens(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
     if project_id:
-        stmt = stmt.join(Skill, Token.skill_id == Skill.id).where(Skill.project_id == project_id)
+        stmt = stmt.join(SKU, Token.sku_id == SKU.id).where(SKU.project_id == project_id)
     result = await db.execute(stmt.limit(limit).offset(offset))
     tokens = result.scalars().all()
     count_stmt = select(func.count()).select_from(Token)
     if status:
         count_stmt = count_stmt.where(Token.status == TokenStatus(status))
     if project_id:
-        count_stmt = count_stmt.join(Skill, Token.skill_id == Skill.id).where(Skill.project_id == project_id)
+        count_stmt = count_stmt.join(SKU, Token.sku_id == SKU.id).where(SKU.project_id == project_id)
     total = (await db.execute(count_stmt)).scalar_one()
     items = []
     for t in tokens:

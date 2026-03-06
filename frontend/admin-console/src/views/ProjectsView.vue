@@ -15,7 +15,7 @@
         <table v-else class="data-table">
           <thead>
             <tr>
-              <th>名称</th><th>Slug</th><th>类型</th><th>状态</th><th>创建时间</th><th>操作</th>
+              <th>名称</th><th>Slug</th><th>类型</th><th>绑定 Skill</th><th>状态</th><th>创建时间</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -28,6 +28,12 @@
               </td>
               <td><code class="slug-code">{{ p.slug }}</code></td>
               <td><span class="badge-type">{{ p.type }}</span></td>
+              <td>
+                <span v-if="p.skill_id" class="badge-skill">
+                  {{ skills.find(s => s.id === p.skill_id)?.name ?? p.skill_id.slice(0,8) + '…' }}
+                </span>
+                <span v-else class="badge-none">未绑定</span>
+              </td>
               <td>
                 <span :class="p.enabled ? 'badge-on' : 'badge-off'">{{ p.enabled ? '启用' : '禁用' }}</span>
               </td>
@@ -46,7 +52,7 @@
     </div>
 
     <!-- Modal -->
-    <div v-if="modal" class="modal-backdrop" @click.self="modal = null">
+    <div v-if="modal" class="modal-backdrop">
       <div class="modal-box">
         <div class="modal-header">
           <h2>{{ isEdit ? '编辑项目' : '新建项目' }}</h2>
@@ -68,6 +74,12 @@
           <label class="field-label">类型</label>
           <select v-model="form.type" class="field-input">
             <option v-for="t in PROJECT_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </select>
+
+          <label class="field-label">绑定 Skill <span class="hint">&#40;该项目使用的技能&#41;</span></label>
+          <select v-model="form.skill_id" class="field-input">
+            <option :value="null">— 不绑定 —</option>
+            <option v-for="s in skills" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
 
           <label class="field-label">启用</label>
@@ -174,7 +186,7 @@
     </div>
 
     <!-- Confirm Delete -->
-    <div v-if="deleteTarget" class="modal-backdrop" @click.self="deleteTarget = null">
+    <div v-if="deleteTarget" class="modal-backdrop">
       <div class="modal-box modal-sm">
         <div class="modal-header">
           <h2>确认删除</h2>
@@ -195,7 +207,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { listProjects, createProject, updateProject, deleteProject, type Project } from '@/api/client'
+import { listProjects, createProject, updateProject, deleteProject, listSkills, type Project, type Skill } from '@/api/client'
 
 // ── 项目类型枚举（后期拓展在此追加）────────────────────────────
 const PROJECT_TYPES = [
@@ -280,6 +292,7 @@ function serializeOptions(groups: OptionGroup[]): Record<string, unknown> | unde
 
 // ── 响应式状态 ───────────────────────────────────────────────
 const projects = ref<Project[]>([])
+const skills = ref<Skill[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const deleting = ref(false)
@@ -292,6 +305,7 @@ const saveError = ref('')
 const form = ref({
   name: '', slug: '', description: '', cover_url: '',
   type: 'image_processing', enabled: true,
+  skill_id: null as string | null,
   option_groups: [] as OptionGroup[],
 })
 
@@ -299,14 +313,18 @@ onMounted(load)
 
 async function load() {
   loading.value = true
-  try { const r = await listProjects(); projects.value = r.items }
+  try {
+    const [pr, sk] = await Promise.all([listProjects(), listSkills()])
+    projects.value = pr.items
+    skills.value = sk.items
+  }
   catch { /* ignore */ }
   finally { loading.value = false }
 }
 
 function openCreate() {
   isEdit.value = false
-  form.value = { name: '', slug: '', description: '', cover_url: '', type: 'image_processing', enabled: true, option_groups: [] }
+  form.value = { name: '', slug: '', description: '', cover_url: '', type: 'image_processing', enabled: true, skill_id: null, option_groups: [] }
   saveError.value = ''
   modal.value = 'create'
 }
@@ -320,6 +338,7 @@ function openEdit(p: Project) {
     cover_url: p.cover_url ?? '',
     type: p.type,
     enabled: p.enabled,
+    skill_id: p.skill_id ?? null,
     option_groups: parseOptions(p.options),
   }
   saveError.value = ''
@@ -337,6 +356,7 @@ async function save() {
       cover_url: form.value.cover_url || undefined,
       type: form.value.type,
       enabled: form.value.enabled,
+      skill_id: form.value.skill_id || null,
       options: serializeOptions(form.value.option_groups),
     }
     if (isEdit.value) await updateProject(editingId.value, body)
@@ -430,6 +450,9 @@ function fmtDate(s: string) { return new Date(s).toLocaleDateString('zh-CN') }
 .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-del-confirm { padding: 9px 22px; border-radius: 9px; background: #EF4444; color: white; border: none; font-weight: 600; cursor: pointer; }
 .btn-del-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+.badge-skill { background: #DBEAFE; color: #1D4ED8; padding: 3px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; }
+.badge-none { color: #94A3B8; font-size: 0.82rem; }
+.hint { color: #94A3B8; font-weight: 400; font-size: 0.78rem; margin-left: 4px; }
 
 /* ── 选项配置编辑器 ── */
 .og-section { background: #F8FAFC; border: 1.5px solid #E2E8F0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }

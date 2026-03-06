@@ -76,7 +76,7 @@ class TimestampMixin:
 
 # ── Project ───────────────────────────────────────────────────────────
 class Project(Base, TimestampMixin):
-
+    """options 字段示例：
 
         {
           "option_groups": [
@@ -84,7 +84,7 @@ class Project(Base, TimestampMixin):
               "id": "colorize",
               "label": "添加彩色效果",
               "description": "将黑白老照片智能上色",
-              "type": "toggle",          // "toggle" | "single_choice"
+              "type": "toggle",          # "toggle" | "single_choice"
               "default": false,
               "icon": "🎨",
               "prompt_addition": "对照片进行智能上色，让黑白照片重现彩色生机"
@@ -113,8 +113,13 @@ class Project(Base, TimestampMixin):
     type: Mapped[str] = mapped_column(String(50), nullable=False, default="photo_restore")
     options: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="定制化选项组配置 JSON")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    skill_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("skills.id", ondelete="SET NULL"), nullable=True,
+        comment="该项目绑定的默认 Skill"
+    )
 
     skus: Mapped[list["SKU"]] = relationship("SKU", back_populates="project", lazy="selectin")
+    skill: Mapped["Skill | None"] = relationship("Skill", foreign_keys=[skill_id], lazy="selectin")
 
 
 # ── Skill ─────────────────────────────────────────────────────────────

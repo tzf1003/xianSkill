@@ -180,6 +180,7 @@ export interface Project {
   type: string
   options: Record<string, unknown> | null
   enabled: boolean
+  skill_id: string | null
   created_at: string
 }
 
@@ -191,6 +192,7 @@ export interface ProjectCreate {
   type?: string
   options?: Record<string, unknown>
   enabled?: boolean
+  skill_id?: string | null
 }
 
 export const listProjects = (limit = 50, offset = 0) =>

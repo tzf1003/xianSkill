@@ -66,11 +66,6 @@
           <label>描述</label>
           <input v-model="form.description" placeholder="简短说明" />
         </div>
-        <div class="form-group" style="grid-column:1/-1">
-          <label>所属项目 <span style="font-weight:400;color:#94A3B8">（在 Projects 页面管理绑定关系）</span></label>
-          <input :value="projects.find(p => p.id === form.project_id)?.name ?? '未绑定'" disabled
-            style="background:#F8FAFC;color:#94A3B8;cursor:not-allowed" />
-        </div>
         <div class="form-group">
           <label>版本</label>
           <input v-model="form.version" placeholder="1.0.0" />

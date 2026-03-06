@@ -23,6 +23,7 @@ class ProjectCreate(BaseModel):
     cover_url: str | None = None
     type: str = "photo_restore"
     options: dict | None = None  # 选项组 JSON（见 Project 模型注释）
+    skill_id: uuid.UUID | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -32,6 +33,7 @@ class ProjectUpdate(BaseModel):
     type: str | None = None
     options: dict | None = None
     enabled: bool | None = None
+    skill_id: uuid.UUID | None = None
 
 
 class ProjectOut(BaseModel):
@@ -43,6 +45,7 @@ class ProjectOut(BaseModel):
     type: str
     options: dict | None
     enabled: bool
+    skill_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -58,7 +61,6 @@ class SkillCreate(BaseModel):
     output_schema: dict | None = None
     prompt_template: str | None = None
     runner_config: dict | None = None
-    project_id: uuid.UUID | None = None
 
 
 class SkillOut(BaseModel):
@@ -68,7 +70,6 @@ class SkillOut(BaseModel):
     type: str
     version: str
     enabled: bool
-    project_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -197,7 +198,6 @@ class SkillUpdate(BaseModel):
     output_schema: dict | None = None
     prompt_template: str | None = None
     runner_config: dict | None = None
-    project_id: uuid.UUID | None = None
     enabled: bool | None = None
 
 

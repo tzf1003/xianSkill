@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
+
+# Python 3.13 on Windows: ProactorEventLoop 与 Docker port-forwarding 不兼容，
+# 切换为 SelectorEventLoop 修复 asyncpg/asyncio 连接问题
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI
 
