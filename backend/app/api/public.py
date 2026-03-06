@@ -5,15 +5,16 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 
 from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, ProjectOut, UploadOut
 from app.core.deps import DbSession, get_storage
 from app.domain.models import Job, JobStatus, Project, Skill, SKU
+from app.infra.queue import get_queue
 from app.infra.storage import StorageService
 from app.services import job_service, token_service
-from app.tasks.execute_job import run_job
+from app.tasks.execute_job import execute_job
 
 router = APIRouter(prefix="/v1/public", tags=["public"])
 
@@ -120,7 +121,6 @@ async def upload_file(
 async def submit_job(
     body: JobSubmit,
     db: DbSession,
-    background_tasks: BackgroundTasks,
 ) -> ApiResponse:
     """提交 Job：带 token + inputs + 可选 idempotency_key。
 
@@ -147,7 +147,7 @@ async def submit_job(
         sku = (await db.execute(sku_stmt)).scalar_one_or_none()
         is_human = sku and sku.delivery_mode.value == "human"
         if not is_human:
-            background_tasks.add_task(run_job, str(job.id))
+            get_queue().enqueue(execute_job, str(job.id))
 
     return ApiResponse(data=_job_out(job).model_dump(mode="json"))
 

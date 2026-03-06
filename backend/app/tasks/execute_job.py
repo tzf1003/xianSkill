@@ -93,7 +93,8 @@ async def run_job(job_id_str: str) -> None:
         try:
             t_runner = time.perf_counter()
             runner = PromptRunner()
-            run_result = runner.run(
+            run_result = await asyncio.to_thread(
+                runner.run,
                 job_id=str(job.id),
                 skill={
                     "prompt_template": combined_prompt,
