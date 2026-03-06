@@ -130,3 +130,55 @@ class AssetOut(BaseModel):
 class UploadOut(BaseModel):
     object_key: str
     input_hash: str
+
+
+# ── Admin: Update schemas ─────────────────────────────────────────────
+class SkillUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    version: str | None = None
+    input_schema: dict | None = None
+    output_schema: dict | None = None
+    prompt_template: str | None = None
+    runner_config: dict | None = None
+    enabled: bool | None = None
+
+
+class SKUUpdate(BaseModel):
+    name: str | None = None
+    price_cents: int | None = None
+    delivery_mode: str | None = None
+    total_uses: int | None = None
+    enabled: bool | None = None
+
+
+# ── Admin: Token list ─────────────────────────────────────────────────
+class TokenOut(BaseModel):
+    id: uuid.UUID
+    token: str
+    order_id: uuid.UUID
+    sku_id: uuid.UUID
+    skill_id: uuid.UUID
+    status: str
+    total_uses: int
+    used_count: int
+    reserved_count: int
+    remaining: int
+    expires_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Admin: Stats ──────────────────────────────────────────────────────
+class StatsOut(BaseModel):
+    total_skills: int
+    total_skus: int
+    total_orders: int
+    total_tokens: int
+    total_jobs: int
+    jobs_queued: int
+    jobs_running: int
+    jobs_succeeded: int
+    jobs_failed: int
+
