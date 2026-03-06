@@ -1,0 +1,68 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+.env
+!backend/.env.example
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+*.log
+
+# ── Alembic ───────────────────────────────────────────────────────────
+# 保留 migrations/versions/*.py（迁移脚本需要纳入版本管理）
+
+# ── Node / Frontend ───────────────────────────────────────────────────
+node_modules/
+dist/
+*.local
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.output/
+.vite/
+
+# ── OS ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Docker & Infra ────────────────────────────────────────────────────
+deploy/.env
+
+# ── Secrets / Keys ────────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# ── Data / Volumes (CI 用，生产挂载卷不纳入) ─────────────────────────
+.postgres_data/
+.redis_data/
+.minio_data/

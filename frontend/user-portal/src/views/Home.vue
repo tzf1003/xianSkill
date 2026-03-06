@@ -1,0 +1,5 @@
+<template>
+  <div style="display:flex;align-items:center;justify-content:center;height:100vh">
+    <h1>Skill Platform — User Portal</h1>
+  </div>
+</template>

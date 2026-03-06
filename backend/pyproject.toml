@@ -1,0 +1,30 @@
+[project]
+name = "skill-platform-backend"
+version = "0.1.0"
+description = "Skill 商品化与自动交付平台 - Backend"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.29,<1",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.13,<2",
+    "asyncpg>=0.29,<1",
+    "redis>=5.0,<6",
+    "rq>=1.16,<2",
+    "minio>=7.2,<8",
+    "pydantic>=2.6,<3",
+    "pydantic-settings>=2.2,<3",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "httpx>=0.27,<1",
+    "pytest-asyncio>=0.23,<1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends._legacy:_Backend"
