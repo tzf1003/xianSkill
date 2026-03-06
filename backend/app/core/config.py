@@ -25,11 +25,27 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "skill-assets"
     MINIO_SECURE: bool = False
 
+    # --- AI API 格式选择 ---
+    # 可选值: gemini | openai | anthropic
+    AI_API_FORMAT: str = "gemini"
+
     # --- Gemini ---
     GEMINI_API_KEY: str = ""
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com"
     GEMINI_IMAGE_MODEL: str = "gemini-2.0-flash-preview-image-generation"
     GEMINI_TEXT_MODEL: str = "gemini-2.0-flash"
+
+    # --- OpenAI / OpenAI-Compatible ---
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_IMAGE_MODEL: str = "gpt-4o"
+    OPENAI_TEXT_MODEL: str = "gpt-4o"
+
+    # --- Anthropic / Anthropic-Compatible ---
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_BASE_URL: str = ""
+    ANTHROPIC_IMAGE_MODEL: str = "claude-opus-4-5"
+    ANTHROPIC_TEXT_MODEL: str = "claude-opus-4-5"
 
     # --- Webhook ---
     # 对外可访问的服务根 URL，用于生成 token_url 写入 webhook 通知

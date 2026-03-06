@@ -32,16 +32,35 @@ def _entry(step: str, **kwargs) -> dict:
 
 
 def _make_provider():
-    """根据配置选择 Provider：优先 Gemini，未配置或占位 API Key 则降级至 Mock。"""
-    key = settings.GEMINI_API_KEY
-    if key and key != "your-gemini-api-key-here":
-        from app.runners.providers.gemini import GeminiProvider
-        logger.info("Provider: GeminiProvider (model=%s)", settings.GEMINI_IMAGE_MODEL)
-        return GeminiProvider()
-    else:
-        from app.runners.providers.mock import MockProvider
+    """根据 AI_API_FORMAT 配置选择 Provider，API Key 未配置时降级至 Mock。"""
+    fmt = (settings.AI_API_FORMAT or "gemini").lower()
+
+    if fmt == "openai":
+        key = settings.OPENAI_API_KEY
+        if key and key not in ("", "your-openai-api-key-here"):
+            from app.runners.providers.openai_provider import OpenAIProvider
+            logger.info("Provider: OpenAIProvider (model=%s)", settings.OPENAI_IMAGE_MODEL)
+            return OpenAIProvider()
+        logger.warning("OPENAI_API_KEY 未配置，降级使用 MockProvider")
+
+    elif fmt == "anthropic":
+        key = settings.ANTHROPIC_API_KEY
+        if key and key not in ("", "your-anthropic-api-key-here"):
+            from app.runners.providers.anthropic_provider import AnthropicProvider
+            logger.info("Provider: AnthropicProvider (model=%s)", settings.ANTHROPIC_IMAGE_MODEL)
+            return AnthropicProvider()
+        logger.warning("ANTHROPIC_API_KEY 未配置，降级使用 MockProvider")
+
+    else:  # gemini（默认）
+        key = settings.GEMINI_API_KEY
+        if key and key not in ("", "your-gemini-api-key-here"):
+            from app.runners.providers.gemini import GeminiProvider
+            logger.info("Provider: GeminiProvider (model=%s)", settings.GEMINI_IMAGE_MODEL)
+            return GeminiProvider()
         logger.warning("GEMINI_API_KEY 未配置，降级使用 MockProvider")
-        return MockProvider()
+
+    from app.runners.providers.mock import MockProvider
+    return MockProvider()
 
 
 class PromptRunner(BaseRunner):
@@ -62,9 +81,7 @@ class PromptRunner(BaseRunner):
         logs.append(_entry(
             "runner_start",
             job_id=job_id,
-            provider_selection="GeminiProvider" if (
-                settings.GEMINI_API_KEY and settings.GEMINI_API_KEY != "your-gemini-api-key-here"
-            ) else "MockProvider",
+            api_format=settings.AI_API_FORMAT,
             image_key=image_key,
             prompt_len=len(prompt),
         ))
