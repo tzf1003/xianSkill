@@ -38,8 +38,10 @@ class GeminiProvider(BaseProvider):
                 "google-genai 未安装，请执行: pip install google-genai"
             ) from exc
 
+        http_options = types.HttpOptions(base_url=settings.GEMINI_BASE_URL) if settings.GEMINI_BASE_URL else None
         client = genai.Client(
             api_key=settings.GEMINI_API_KEY,
+            http_options=http_options,
         )
 
         # 构建 contents
