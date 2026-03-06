@@ -32,7 +32,7 @@
       <table class="data-table">
         <thead>
           <tr>
-            <th>Token（前16位）</th><th>状态</th>
+            <th>Token</th><th>状态</th>
             <th>已用 / 总次</th><th>剩余</th>
             <th>过期时间</th><th>创建时间</th><th>操作</th>
           </tr>
@@ -43,7 +43,7 @@
           </tr>
           <tr v-for="t in items" :key="t.id">
             <td>
-              <code class="token-text">{{ t.token.slice(0, 16) }}</code>
+              <code class="token-text">{{ t.token }}</code>
               <button class="copy-btn" @click="copy(t.token)" title="复制完整 token"></button>
               <a class="link-btn" :href="`/s/${t.token}`" target="_blank" title="在用户端打开"></a>
             </td>
@@ -127,7 +127,7 @@
           </div>
           <div class="cr-row">
             <span class="cr-label">用户访问链接：</span>
-            <a :href="`/s/${createdToken}`" target="_blank" class="cr-link">/s/{{ createdToken.slice(0,12) }}</a>
+            <a :href="`/s/${createdToken}`" target="_blank" class="cr-link">/s/{{ createdToken }}</a>
             <button class="copy-btn" @click="copy(`/s/${createdToken}`)"></button>
           </div>
         </div>
