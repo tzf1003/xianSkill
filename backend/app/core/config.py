@@ -16,12 +16,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/skill_platform"
 
     # --- Redis ---
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "redis://localhost:6378/0"
 
     # --- MinIO / S3 ---
     MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_ACCESS_KEY: str = "tzf1003"
+    MINIO_SECRET_KEY: str = "zf123456"
     MINIO_BUCKET: str = "skill-assets"
     MINIO_SECURE: bool = False
     # 若设置，预签名 URL 的 http(s)://host:port 前缀将被替换为此值
