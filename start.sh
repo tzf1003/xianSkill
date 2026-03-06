@@ -61,13 +61,13 @@ info "[2/4] 启动 RQ Worker"
 PIDS+=($!)
 
 # ── user-portal 开发服务器 ──────────────────────────────────────────
-info "[3/4] 启动 user-portal 前台      http://localhost:5173"
-(cd frontend/user-portal && npm run dev 2>&1 | sed 's/^/[portal]  /') &
+info "[3/4] 启动 user-portal 前台      http://0.0.0.0:5173"
+(cd frontend/user-portal && npm run dev -- --host 0.0.0.0 --port 5173 2>&1 | sed 's/^/[portal]  /') &
 PIDS+=($!)
 
 # ── admin-console 开发服务器 ────────────────────────────────────────
-info "[4/4] 启动 admin-console 后台    http://localhost:5174"
-(cd frontend/admin-console && npm run dev 2>&1 | sed 's/^/[admin]   /') &
+info "[4/4] 启动 admin-console 后台    http://0.0.0.0:5174"
+(cd frontend/admin-console && npm run dev -- --host 0.0.0.0 --port 5174 2>&1 | sed 's/^/[admin]   /') &
 PIDS+=($!)
 
 echo ""
@@ -75,8 +75,8 @@ echo "============================================================"
 echo " 所有服务已启动（输出混合显示在当前终端）："
 echo "   后端 API   : http://localhost:8000"
 echo "   API 文档   : http://localhost:8000/docs"
-echo "   用户前台   : http://localhost:5173"
-echo "   管理后台   : http://localhost:5174"
+echo "   用户前台   : http://0.0.0.0:5173"
+echo "   管理后台   : http://0.0.0.0:5174"
 echo "============================================================"
 echo " 按 Ctrl+C 停止所有服务"
 echo "============================================================"
