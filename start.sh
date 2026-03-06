@@ -55,9 +55,13 @@ PIDS+=($!)
 
 sleep 1   # 等 FastAPI 先就绪
 
-# ── RQ Worker ────────────────────────────────────────────────────────
-info "[2/4] 启动 RQ Worker"
-(cd backend && python worker.py 2>&1 | sed 's/^/[worker]  /') &
+# ── RQ Worker x3 ─────────────────────────────────────────────────────
+info "[2/4] 启动 RQ Worker x3 (并行处理 AI 任务)"
+(cd backend && python worker.py 2>&1 | sed 's/^/[worker1] /') &
+PIDS+=($!)
+(cd backend && python worker.py 2>&1 | sed 's/^/[worker2] /') &
+PIDS+=($!)
+(cd backend && python worker.py 2>&1 | sed 's/^/[worker3] /') &
 PIDS+=($!)
 
 # ── user-portal 开发服务器 ──────────────────────────────────────────

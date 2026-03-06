@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re
 import time
 
 from PIL import Image
@@ -88,6 +89,23 @@ class OpenAIProvider(BaseProvider):
         # 兼容以下场景：
         # 1. content 是 list，块类型为 image_url，值为 data URI
         # 2. content 是 list，块类型为 image_url，值为 https URL（不支持，记录警告）
+        # 3. content 是纯字符串，包含 Markdown 图像 ![...](data:image/...;base64,...) 格式
+        # 4. content 是纯字符串，包含裸 data URI（data:image/...;base64,...）
+        def _try_extract_b64(data_uri: str) -> bytes | None:
+            """从 data URI 中提取 base64 并解码，失败返回 None。"""
+            try:
+                _, b64_part = data_uri.split(",", 1)
+                # base64 payload 可能被截断显示，但实际响应是完整的
+                return base64.b64decode(b64_part + "==")  # 补齐 padding
+            except Exception:
+                return None
+
+        def _bytes_to_png(raw: bytes) -> bytes:
+            result_img = Image.open(io.BytesIO(raw))
+            buf = io.BytesIO()
+            result_img.save(buf, format="PNG")
+            return buf.getvalue()
+
         if isinstance(msg_content, list):
             for block in msg_content:
                 block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
@@ -95,14 +113,44 @@ class OpenAIProvider(BaseProvider):
                     url_obj = block.get("image_url") if isinstance(block, dict) else getattr(block, "image_url", None)
                     url = (url_obj.get("url") if isinstance(url_obj, dict) else getattr(url_obj, "url", "")) or ""
                     if url.startswith("data:image/"):
-                        _, b64_data = url.split(",", 1)
-                        raw = base64.b64decode(b64_data)
-                        result_img = Image.open(io.BytesIO(raw))
-                        buf = io.BytesIO()
-                        result_img.save(buf, format="PNG")
-                        png_bytes = buf.getvalue()
+                        raw = _try_extract_b64(url)
+                        if raw:
+                            png_bytes = _bytes_to_png(raw)
+                            logger.info(
+                                "OpenAI 返回图像（list image_url data URI）: %d bytes, duration=%.0f ms",
+                                len(png_bytes), duration_ms,
+                            )
+                            return ProviderResult(
+                                image_bytes=png_bytes,
+                                model=settings.OPENAI_IMAGE_MODEL,
+                                finish_reason=finish_reason,
+                                response_text="",
+                                image_mime="image/png",
+                                prompt_len=len(prompt),
+                                input_image_bytes=len(image_bytes) if image_bytes else 0,
+                                output_image_bytes=len(png_bytes),
+                                duration_ms=round(duration_ms, 1),
+                                extra={"input_mime": input_mime},
+                            )
+                    elif url.startswith("https://"):
+                        logger.warning("OpenAI 返回了 URL 图像，暂不支持下载: %s", url[:100])
+
+        # ── 纯文本中提取图像（Markdown / 裸 data URI） ───────────────
+        if isinstance(msg_content, str):
+            # 尝试 Markdown 格式：![...](data:image/xxx;base64,...)
+            md_match = re.search(r'!\[[^\]]*\]\((data:image/[^;]+;base64,[A-Za-z0-9+/=\s]+)\)', msg_content)
+            if not md_match:
+                # 尝试裸 data URI
+                md_match = re.search(r'(data:image/[^;]+;base64,[A-Za-z0-9+/=\s]+)', msg_content)
+
+            if md_match:
+                data_uri = md_match.group(1).replace("\n", "").replace(" ", "")
+                raw = _try_extract_b64(data_uri)
+                if raw:
+                    try:
+                        png_bytes = _bytes_to_png(raw)
                         logger.info(
-                            "OpenAI 返回图像（data URI）: %d bytes, duration=%.0f ms",
+                            "OpenAI 返回图像（文本 data URI）: %d bytes, duration=%.0f ms",
                             len(png_bytes), duration_ms,
                         )
                         return ProviderResult(
@@ -115,10 +163,10 @@ class OpenAIProvider(BaseProvider):
                             input_image_bytes=len(image_bytes) if image_bytes else 0,
                             output_image_bytes=len(png_bytes),
                             duration_ms=round(duration_ms, 1),
-                            extra={"input_mime": input_mime},
+                            extra={"input_mime": input_mime, "extracted_from": "text"},
                         )
-                    elif url.startswith("https://"):
-                        logger.warning("OpenAI 返回了 URL 图像，暂不支持下载: %s", url[:100])
+                    except Exception as e:
+                        logger.warning("从文本 data URI 解析图像失败: %s", e)
 
         # ── 纯文本响应，无法获取图像 ──────────────────────────────────
         text_preview = msg_content if isinstance(msg_content, str) else str(msg_content)
