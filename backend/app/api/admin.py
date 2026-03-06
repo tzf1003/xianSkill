@@ -6,7 +6,8 @@ import asyncio
 import hashlib
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.schemas import (
@@ -27,7 +28,7 @@ from app.api.schemas import (
     WebhookOut,
 )
 from app.core.config import settings
-from app.core.deps import DbSession, get_storage
+from app.core.deps import DbSession, create_admin_token, require_admin, get_storage
 from app.domain.models import (
     Asset,
     DeliveryRecord,
@@ -44,7 +45,29 @@ from app.domain.models import (
 )
 from app.services import job_service, token_service
 
-router = APIRouter(prefix="/v1/admin", tags=["admin"])
+# ── 登录路由（无需鉴权）──────────────────────────────────────────────
+auth_router = APIRouter(prefix="/v1/admin", tags=["admin-auth"])
+
+
+class _LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+@auth_router.post("/login")
+async def admin_login(body: _LoginIn) -> ApiResponse:
+    """管理员登录，成功返回 session token。"""
+    if body.username != settings.ADMIN_USERNAME or body.password != settings.ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    return ApiResponse(data={"token": create_admin_token()})
+
+
+# ── 受保护的管理路由 ──────────────────────────────────────────────────
+router = APIRouter(
+    prefix="/v1/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════

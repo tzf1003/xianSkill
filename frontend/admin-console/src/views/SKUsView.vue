@@ -125,7 +125,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.total-hint { font-size: .85rem; color: #888; }
-.tiny { font-size: .75rem; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.total-hint { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
+.tiny { font-size: .75rem; font-family: monospace; background: var(--bg); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); }
 </style>

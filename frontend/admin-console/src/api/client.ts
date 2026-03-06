@@ -52,8 +52,24 @@ export interface Stats {
 export interface PageResult<T> { total: number; items: T[] }
 
 // ── 请求工具 ─────────────────────────────────────────────────────────
+const TOKEN_KEY = 'admin_token'
+
+export const getStoredToken = () => localStorage.getItem(TOKEN_KEY)
+export const setStoredToken = (t: string) => localStorage.setItem(TOKEN_KEY, t)
+export const clearStoredToken = () => localStorage.removeItem(TOKEN_KEY)
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const token = getStoredToken()
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+  const res = await fetch(url, { ...init, headers })
+  if (res.status === 401) {
+    clearStoredToken()
+    window.location.href = '/login'
+    throw new Error('未登录')
+  }
   const json = await res.json()
   if (json.code !== 0) throw new Error(json.message ?? `HTTP ${res.status}`)
   return json.data as T
@@ -66,6 +82,25 @@ function json(method: string, body: unknown): RequestInit {
     body: JSON.stringify(body),
   }
 }
+
+// ── 认证 ──────────────────────────────────────────────────────────────
+export async function login(username: string, password: string): Promise<void> {
+  const res = await fetch(`${BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  const data = await res.json()
+  if (data.code !== 0) throw new Error(data.message ?? '登录失败')
+  setStoredToken(data.data.token)
+}
+
+export function logout(): void {
+  clearStoredToken()
+  window.location.href = '/login'
+}
+
+
 
 // ── Stats ─────────────────────────────────────────────────────────────
 export const getStats = () => request<Stats>(`${BASE}/stats`)

@@ -171,9 +171,9 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.total-hint { font-size: 0.85rem; color: #888; }
-.cell-name { font-weight: 600; font-size: 0.88rem; }
-.cell-sub { font-size: 0.77rem; color: #888; margin-top: 2px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.total-hint { font-size: 0.85rem; color: var(--text-muted); font-weight: 500; }
+.cell-name { font-weight: 600; font-size: 0.88rem; color: var(--text); }
+.cell-sub { font-size: 0.77rem; color: var(--text-muted); margin-top: 2px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-cell { display: flex; gap: 6px; white-space: nowrap; }
 </style>

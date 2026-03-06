@@ -129,22 +129,23 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.filters { display: flex; align-items: center; gap: 12px; }
-.filters select { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: .875rem; }
-.total-hint { font-size: .85rem; color: #888; }
-.tiny { font-size: .76rem; }
-.row-selected td { background: #f0f3ff; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+.filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.filters select { border: 1.5px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: .875rem; color: var(--text); background: var(--bg-card); outline: none; }
+.filters select:focus { border-color: var(--primary); }
+.total-hint { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
+.tiny { font-size: .76rem; font-family: monospace; background: var(--bg); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); }
+.row-selected td { background: var(--primary-light); }
 .detail-grid { display: flex; flex-direction: column; gap: 10px; }
 .detail-row { display: flex; align-items: center; gap: 12px; }
 .detail-block { display: flex; flex-direction: column; gap: 6px; }
-.dl { font-size: .78rem; font-weight: 700; color: #888; min-width: 48px; }
-.dv { font-size: .875rem; }
-.err { color: #c00; }
+.dl { font-size: .78rem; font-weight: 700; color: var(--text-muted); min-width: 48px; }
+.dv { font-size: .875rem; color: var(--text); }
+.err { color: var(--danger); }
 .json-block, .log-block {
-  background: #f6f8ff; border: 1px solid #e2e6ff; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px 12px; font-size: .8rem; overflow: auto; max-height: 200px;
-  white-space: pre-wrap; word-break: break-all;
+  white-space: pre-wrap; word-break: break-all; font-family: monospace; color: var(--text);
 }
-.asset-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: #f8f9ff; border-radius: 6px; font-size: .85rem; }
+.asset-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--bg); border-radius: 8px; font-size: .85rem; border: 1px solid var(--border); }
 </style>

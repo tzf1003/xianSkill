@@ -29,5 +29,11 @@ class Settings(BaseSettings):
     # 对外可访问的服务根 URL，用于生成 token_url 写入 webhook 通知
     BASE_URL: str = "http://localhost:8000"
 
+    # --- Admin 登录 ---
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "admin123"
+    # 用于 HMAC 签名 session token，生产环境请替换为随机长字符串
+    ADMIN_SECRET_KEY: str = "change-this-secret-in-production"
+
 
 settings = Settings()

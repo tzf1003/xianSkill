@@ -92,12 +92,14 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.filters { display: flex; align-items: center; gap: 12px; }
-.filters select { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: .875rem; }
-.total-hint { font-size: .85rem; color: #888; }
-.token-text { font-size: .8rem; color: #333; }
-.copy-btn { background: none; border: none; cursor: pointer; font-size: .9rem; margin-left: 4px; }
-.remaining-ok { color: #22c55e; font-weight: 700; }
-.remaining-zero { color: #ef4444; font-weight: 700; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+.filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.filters select { border: 1.5px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: .875rem; color: var(--text); background: var(--bg-card); outline: none; }
+.filters select:focus { border-color: var(--primary); }
+.total-hint { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
+.token-text { font-size: .78rem; color: var(--text-muted); font-family: monospace; }
+.copy-btn { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 0 4px; transition: color 0.15s; }
+.copy-btn:hover { color: var(--primary); }
+.remaining-ok { color: #10B981; font-weight: 700; }
+.remaining-zero { color: var(--danger); font-weight: 700; }
 </style>

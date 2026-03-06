@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.admin import router as admin_router
+from app.api.admin import auth_router, router as admin_router
 from app.api.health import router as health_router
 from app.api.public import router as public_router
 from app.core.config import settings
@@ -36,5 +36,6 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(public_router)
-app.include_router(admin_router)
+app.include_router(auth_router)   # /v1/admin/login（无需鉴权）
+app.include_router(admin_router)  # /v1/admin/*（需要 Bearer token）
 
