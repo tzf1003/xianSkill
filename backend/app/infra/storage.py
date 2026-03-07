@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 from datetime import timedelta
 
 from minio import Minio
@@ -22,9 +23,22 @@ class StorageService:
 
     # ── 初始化 ────────────────────────────────────────────────────────
     def ensure_bucket(self) -> None:
-        """如果 bucket 不存在则创建。"""
+        """如果 bucket 不存在则创建，并设置 goods/ 前缀公开读策略。"""
         if not self.client.bucket_exists(self.bucket):
             self.client.make_bucket(self.bucket)
+        # 允许匿名读取 goods/ 前缀（用于 logo 等公开图片资源）
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"AWS": ["*"]},
+                    "Action": ["s3:GetObject"],
+                    "Resource": [f"arn:aws:s3:::{self.bucket}/goods/*"],
+                }
+            ],
+        }
+        self.client.set_bucket_policy(self.bucket, json.dumps(policy))
 
     # ── 写入 ──────────────────────────────────────────────────────────
     def put_bytes(
@@ -58,6 +72,8 @@ class StorageService:
         )
 
     def presigned_get_url(self, object_key: str, expires_seconds: int = 3600) -> str:
+        # MinIO 预签名URL最大有效期为7天（604800秒）
+        expires_seconds = min(expires_seconds, 604800)
         url = self.client.presigned_get_object(
             self.bucket,
             object_key,
@@ -69,6 +85,14 @@ class StorageService:
             import re
             url = re.sub(r'^https?://[^/]+', public_base.rstrip('/'), url)
         return url
+
+    def public_url(self, object_key: str) -> str:
+        """构造永久公开访问URL（需要 bucket 已设为公开或配置了 MINIO_PUBLIC_BASE）。"""
+        public_base = settings.MINIO_PUBLIC_BASE
+        if public_base:
+            return f"{public_base.rstrip('/')}/{self.bucket}/{object_key}"
+        # 回退：使用7天预签名URL
+        return self.presigned_get_url(object_key, expires_seconds=604800)
 
 
 def get_storage() -> StorageService:

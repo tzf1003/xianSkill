@@ -64,6 +64,36 @@ class JobStatus(str, enum.Enum):
     canceled = "canceled"
 
 
+class GoodsType(int, enum.Enum):
+    """虚拟货源商品类型"""
+    recharge = 1   # 直充
+    card_key = 2   # 卡密
+    coupon = 3     # 券码
+
+
+class GoodsStatus(int, enum.Enum):
+    """虚拟货源商品状态"""
+    on_shelf = 1   # 在架
+    off_shelf = 2  # 下架
+
+
+class DeliveryTiming(str, enum.Enum):
+    """发货时机"""
+    after_payment = "after_payment"  # 付款后发货
+    after_receipt = "after_receipt"  # 收货后赠送
+    after_review = "after_review"   # 好评后赠送
+
+
+class XgjOrderStatus(int, enum.Enum):
+    """闲管家虚拟货源订单状态"""
+    pending = 0       # 待处理
+    processing = 1    # 处理中
+    success = 2       # 成功
+    failed = 3        # 失败
+    refunding = 4     # 退款中
+    refunded = 5      # 已退款
+
+
 # ── Mixin ─────────────────────────────────────────────────────────────
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
@@ -317,3 +347,122 @@ class DeliveryRecord(Base, TimestampMixin):
     job: Mapped[Job] = relationship("Job", back_populates="delivery_record")
 
     __table_args__ = (Index("ix_delivery_records_job_id", "job_id"),)
+
+
+# ── Goods（虚拟货源商品）──────────────────────────────────────────────
+class Goods(Base, TimestampMixin):
+    """虚拟货源商品 — 对应闲管家虚拟货源标准接口中的商品。"""
+
+    __tablename__ = "goods"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goods_no: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True, comment="商品编号(系统自动生成)")
+    goods_type: Mapped[int] = mapped_column(Integer, nullable=False, comment="商品类型 1=直充 2=卡密 3=券码")
+    goods_name: Mapped[str] = mapped_column(String(500), nullable=False, comment="商品名称")
+    logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="商品图片/Logo URL")
+    price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="成本价(分)")
+    stock: Mapped[int] = mapped_column(Integer, default=0, comment="库存数量")
+    status: Mapped[int] = mapped_column(Integer, default=1, comment="状态 1=在架 2=下架")
+    multi_spec: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否多规格商品")
+    xgj_goods_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True, comment="闲管家商品ID(绑定后由闲管家分配)")
+    spec_groups: Mapped[list | None] = mapped_column(JSON, nullable=True, comment="规格维度定义 [{name,values}], 最多2组")
+    template: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="充值模板(直充商品)")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    specs: Mapped[list["GoodsSpec"]] = relationship("GoodsSpec", back_populates="goods", lazy="selectin", cascade="all, delete-orphan")
+    subscriptions: Mapped[list["GoodsSubscription"]] = relationship("GoodsSubscription", back_populates="goods", lazy="selectin", cascade="all, delete-orphan")
+
+
+# ── GoodsSpec（商品规格）──────────────────────────────────────────────
+class GoodsSpec(Base, TimestampMixin):
+    """商品规格 — 每个商品可有多个规格。"""
+
+    __tablename__ = "goods_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goods_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods.id", ondelete="CASCADE"), nullable=False
+    )
+    spec_name: Mapped[str] = mapped_column(String(200), nullable=False, comment="规格名称")
+    price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="规格价格(分)")
+    stock: Mapped[int] = mapped_column(Integer, default=0, comment="规格库存")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    goods: Mapped[Goods] = relationship("Goods", back_populates="specs")
+    sku_bindings: Mapped[list["SpecSkuBinding"]] = relationship(
+        "SpecSkuBinding", back_populates="spec", lazy="selectin", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (Index("ix_goods_specs_goods_id", "goods_id"),)
+
+
+# ── SpecSkuBinding（规格-SKU 发货时机绑定）───────────────────────────
+class SpecSkuBinding(Base, TimestampMixin):
+    """规格与 SKU 的发货时机绑定。
+
+    每个规格可分别在 3 个发货时机绑定不同的 SKU：
+    - after_payment: 付款后发货
+    - after_receipt: 收货后赠送
+    - after_review:  好评后赠送
+    """
+
+    __tablename__ = "spec_sku_bindings"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    spec_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods_specs.id", ondelete="CASCADE"), nullable=False
+    )
+    timing: Mapped[DeliveryTiming] = mapped_column(
+        Enum(DeliveryTiming, name="delivery_timing", native_enum=False), nullable=False,
+        comment="发货时机"
+    )
+    sku_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("skus.id", ondelete="SET NULL"), nullable=True,
+        comment="绑定的 SKU"
+    )
+
+    spec: Mapped[GoodsSpec] = relationship("GoodsSpec", back_populates="sku_bindings")
+    sku: Mapped["SKU | None"] = relationship("SKU", foreign_keys=[sku_id], lazy="selectin")
+
+    __table_args__ = (
+        Index("ix_spec_sku_bindings_spec_id", "spec_id"),
+        Index("uq_spec_timing", "spec_id", "timing", unique=True),
+    )
+
+
+# ── GoodsSubscription（商品变更订阅）─────────────────────────────────
+class GoodsSubscription(Base, TimestampMixin):
+    """闲管家对我方商品的变更通知订阅关系。"""
+
+    __tablename__ = "goods_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goods_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods.id", ondelete="CASCADE"), nullable=False
+    )
+    notify_url: Mapped[str] = mapped_column(String(2000), nullable=False, comment="闲管家通知回调URL")
+
+    goods: Mapped[Goods] = relationship("Goods", back_populates="subscriptions")
+
+    __table_args__ = (
+        Index("ix_goods_subscriptions_goods_id", "goods_id"),
+    )
+
+
+# ── XgjOrder（闲管家虚拟货源订单）────────────────────────────────────
+class XgjOrder(Base, TimestampMixin):
+    """闲管家虚拟货源下单记录。"""
+
+    __tablename__ = "xgj_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    order_no: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True, comment="闲管家订单号")
+    out_order_no: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True, comment="我方订单号")
+    goods_no: Mapped[str] = mapped_column(String(100), nullable=False, comment="商品编号")
+    spec_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, comment="规格ID")
+    goods_type: Mapped[int] = mapped_column(Integer, nullable=False, comment="商品类型")
+    status: Mapped[int] = mapped_column(Integer, default=0, comment="订单状态")
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    total_price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="总价(分)")
+    buyer_info: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="买家信息/充值账号等")
+    delivery_info: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="发货信息(卡密/券码等)")

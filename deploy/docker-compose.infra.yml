@@ -37,8 +37,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: tzf1003
+      MINIO_ROOT_PASSWORD: zf123456
     ports:
       - "9000:9000"
       - "9001:9001"

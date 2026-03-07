@@ -1,47 +1,45 @@
 @echo off
 setlocal EnableDelayedExpansion
-chcp 936 >nul
 
 echo ============================================================
-echo  ArtForge -- Start Script (Windows)
+echo  xianSkill -- Start Script (Windows)
 echo ============================================================
 
 if not exist "backend\.venv\Scripts\activate.bat" (
-    echo [ERROR] �Ҳ������⻷������������ build.bat
+    echo [ERROR] Virtual env not found. Please run build.bat first.
     exit /b 1
 )
 
 if not exist "backend\.env" (
-    echo [WARN]  backend\.env �����ڣ��Ѵ� .env.example ����Ĭ������
+    echo [WARN]  backend\.env not found. Copying from .env.example ...
     copy /Y backend\.env.example backend\.env >nul
 )
 
 echo.
-echo �ڶ����������������з���...
+echo Starting all services ...
 
-echo [1/4] FastAPI ���          http://localhost:8000
-start "ArtForge - FastAPI" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+echo [1/4] FastAPI backend      http://localhost:8000
+start "xianSkill - FastAPI" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-echo [2/4] RQ Worker x3 (并行处理 AI 任务)
-start "ArtForge - RQ Worker 1" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
-start "ArtForge - RQ Worker 2" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
-start "ArtForge - RQ Worker 3" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
+echo [2/4] RQ Worker x3
+start "xianSkill - RQ Worker 1" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
+start "xianSkill - RQ Worker 2" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
+start "xianSkill - RQ Worker 3" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
 
-echo [3/4] user-portal           http://localhost:5173
-start "ArtForge - user-portal" cmd /k "cd /d %~dp0frontend\user-portal && npm run dev"
+echo [3/4] user-portal          http://localhost:5173
+start "xianSkill - user-portal" cmd /k "cd /d %~dp0frontend\user-portal && npm run dev"
 
-echo [4/4] admin-console         http://localhost:5174
-start "ArtForge - admin-console" cmd /k "cd /d %~dp0frontend\admin-console && npm run dev"
+echo [4/4] admin-console        http://localhost:5174
+start "xianSkill - admin-console" cmd /k "cd /d %~dp0frontend\admin-console && npm run dev"
 
 echo.
 echo ============================================================
-echo  �����ַ��
-echo    ��� API   : http://localhost:8000
-echo    API �ĵ�   : http://localhost:8000/docs
-echo    �û�ǰ̨   : http://localhost:5173
-echo    ������̨   : http://localhost:5174
+echo   Backend API   : http://localhost:8000
+echo   API Docs      : http://localhost:8000/docs
+echo   User Portal   : http://localhost:5173
+echo   Admin Console : http://localhost:5174
 echo ============================================================
-echo  �رո�����ֱ�ӹرն�Ӧ�����д��ڼ���
+echo   Close the opened terminal windows to stop services.
 echo ============================================================
 exit /b 0
 endlocal

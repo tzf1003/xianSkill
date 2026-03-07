@@ -95,7 +95,7 @@
             <div v-if="group.type === 'toggle'" class="toggle-row" @click="toggleOption(group.id)">
               <div class="toggle-info">
                 <span class="toggle-icon">{{ group.icon || '' }}</span>
-                <span class="toggle-text">{{ group.label }}</span>
+                <span class="toggle-text">{{ group.description }}</span>
               </div>
               <div class="toggle-switch" :class="{ on: selectedOptions.has(group.id) }">
                 <div class="toggle-thumb" />

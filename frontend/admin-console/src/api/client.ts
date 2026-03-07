@@ -210,3 +210,156 @@ export const updateProject = (id: string, body: Partial<ProjectCreate>) =>
 
 export const deleteProject = (id: string) =>
   request<{ id: string; enabled: boolean }>(`${BASE}/projects/${id}`, { method: 'DELETE' })
+
+// ── Goods（虚拟货源商品）──────────────────────────────────────────────
+export interface SpecSkuBinding {
+  id: string
+  timing: string  // after_payment | after_receipt | after_review
+  sku_id: string | null
+  created_at: string
+}
+
+export interface GoodsSpec {
+  id: string
+  goods_id: string
+  spec_name: string
+  price_cents: number
+  stock: number
+  enabled: boolean
+  sku_bindings: SpecSkuBinding[]
+  created_at: string
+}
+
+export interface SpecGroup {
+  name: string
+  values: string[]
+}
+
+export interface Goods {
+  id: string
+  goods_no: string
+  goods_type: number   // 1=直充 2=卡密 3=券码
+  goods_name: string
+  logo_url: string | null
+  price_cents: number
+  stock: number
+  status: number       // 1=在架 2=下架
+  multi_spec: boolean  // 是否多规格
+  xgj_goods_id: string | null  // 闲管家商品ID
+  spec_groups: SpecGroup[] | null  // 规格维度定义
+  template: Record<string, unknown> | null
+  description: string | null
+  specs: GoodsSpec[]
+  created_at: string
+  updated_at: string
+}
+
+export interface GoodsCreate {
+  goods_type: number
+  goods_name: string
+  logo_url?: string | null
+  price_cents?: number
+  stock?: number
+  status?: number
+  multi_spec?: boolean
+  spec_groups?: SpecGroup[] | null
+  template?: Record<string, unknown> | null
+  description?: string | null
+  specs?: { spec_name: string; price_cents?: number; stock?: number; enabled?: boolean; sku_bindings?: { timing: string; sku_id?: string | null }[] }[]
+}
+
+export interface GoodsUpdate {
+  goods_name?: string
+  goods_type?: number
+  logo_url?: string | null
+  price_cents?: number
+  stock?: number
+  status?: number
+  multi_spec?: boolean
+  xgj_goods_id?: string | null
+  spec_groups?: SpecGroup[] | null
+  template?: Record<string, unknown> | null
+  description?: string | null
+}
+
+export interface SpecVariantPayload {
+  spec_name: string
+  price_cents: number
+  stock: number
+  enabled?: boolean
+  sku_bindings?: { timing: string; sku_id?: string | null }[]
+}
+
+export interface SpecConfigPayload {
+  spec_groups: SpecGroup[]
+  variants: SpecVariantPayload[]
+}
+
+export interface XgjOrder {
+  id: string
+  order_no: string
+  out_order_no: string
+  goods_no: string
+  spec_id: string | null
+  goods_type: number
+  status: number
+  quantity: number
+  total_price_cents: number
+  buyer_info: Record<string, unknown> | null
+  delivery_info: Record<string, unknown> | null
+  created_at: string
+}
+
+export const listGoods = (limit = 50, offset = 0, status?: number, goodsType?: number) => {
+  const q = [status != null ? `status=${status}` : '', goodsType != null ? `goods_type=${goodsType}` : ''].filter(Boolean).join('&')
+  return request<PageResult<Goods>>(`${BASE}/goods?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
+}
+
+export const createGoods = (body: GoodsCreate) =>
+  request<Goods>(`${BASE}/goods`, json('POST', body))
+
+export const getGoods = (id: string) =>
+  request<Goods>(`${BASE}/goods/${id}`)
+
+export const updateGoods = (id: string, body: GoodsUpdate) =>
+  request<Goods>(`${BASE}/goods/${id}`, json('PATCH', body))
+
+export const deleteGoods = (id: string) =>
+  request<{ deleted: string }>(`${BASE}/goods/${id}`, { method: 'DELETE' })
+
+export async function uploadGoodsLogo(goodsId: string, file: File): Promise<Goods> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const token = getStoredToken()
+  const res = await fetch(`${BASE}/goods/${goodsId}/logo`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  })
+  if (res.status === 401) {
+    clearStoredToken(); window.location.href = '/login'; throw new Error('未登录')
+  }
+  const j = await res.json()
+  if (j.code !== 0) throw new Error(j.message ?? `HTTP ${res.status}`)
+  return j.data as Goods
+}
+
+export const createGoodsSpec = (goodsId: string, body: { spec_name: string; price_cents?: number; stock?: number; enabled?: boolean; sku_bindings?: { timing: string; sku_id?: string | null }[] }) =>
+  request<GoodsSpec>(`${BASE}/goods/${goodsId}/specs`, json('POST', body))
+
+export const updateGoodsSpec = (goodsId: string, specId: string, body: { spec_name?: string; price_cents?: number; stock?: number; enabled?: boolean }) =>
+  request<GoodsSpec>(`${BASE}/goods/${goodsId}/specs/${specId}`, json('PATCH', body))
+
+export const deleteGoodsSpec = (goodsId: string, specId: string) =>
+  request<{ deleted: string }>(`${BASE}/goods/${goodsId}/specs/${specId}`, { method: 'DELETE' })
+
+export const setSpecBindings = (goodsId: string, specId: string, bindings: { timing: string; sku_id?: string | null }[]) =>
+  request<GoodsSpec>(`${BASE}/goods/${goodsId}/specs/${specId}/bindings`, json('PUT', bindings))
+
+export const setSpecConfig = (goodsId: string, body: SpecConfigPayload) =>
+  request<Goods>(`${BASE}/goods/${goodsId}/spec-config`, json('PUT', body))
+
+export const listXgjOrders = (limit = 50, offset = 0, status?: number, goodsNo?: string) => {
+  const q = [status != null ? `status=${status}` : '', goodsNo ? `goods_no=${goodsNo}` : ''].filter(Boolean).join('&')
+  return request<PageResult<XgjOrder>>(`${BASE}/xgj-orders?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
+}

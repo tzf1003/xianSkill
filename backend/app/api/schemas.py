@@ -282,3 +282,151 @@ class StatsOut(BaseModel):
     jobs_succeeded: int
     jobs_failed: int
 
+
+# ── Goods（虚拟货源商品）─────────────────────────────────────────────
+class SpecSkuBindingIn(BaseModel):
+    """规格-SKU 发货时机绑定（写入用）"""
+    timing: str = Field(..., pattern=r"^(after_payment|after_receipt|after_review)$")
+    sku_id: uuid.UUID | None = None
+
+
+class SpecSkuBindingOut(BaseModel):
+    id: uuid.UUID
+    timing: str
+    sku_id: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GoodsSpecCreate(BaseModel):
+    spec_name: str = Field(..., max_length=200)
+    price_cents: int = 0
+    stock: int = 0
+    enabled: bool = True
+    sku_bindings: list[SpecSkuBindingIn] = []
+
+
+class GoodsSpecUpdate(BaseModel):
+    spec_name: str | None = None
+    price_cents: int | None = None
+    stock: int | None = None
+    enabled: bool | None = None
+
+
+class GoodsSpecOut(BaseModel):
+    id: uuid.UUID
+    goods_id: uuid.UUID
+    spec_name: str
+    price_cents: int
+    stock: int
+    enabled: bool
+    sku_bindings: list[SpecSkuBindingOut] = []
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GoodsCreate(BaseModel):
+    goods_type: int = Field(..., ge=1, le=3)  # 1=直充 2=卡密 3=券码
+    goods_name: str = Field(..., max_length=500)
+    logo_url: str | None = None
+    price_cents: int = 0
+    stock: int = 0
+    status: int = Field(1, ge=1, le=2)  # 1=在架 2=下架
+    multi_spec: bool = False  # 是否多规格商品
+    spec_groups: list[dict] | None = None  # [{name, values}]
+    template: dict | None = None
+    description: str | None = None
+    specs: list[GoodsSpecCreate] = []
+
+
+class GoodsUpdate(BaseModel):
+    goods_name: str | None = None
+    goods_type: int | None = Field(None, ge=1, le=3)
+    logo_url: str | None = None
+    price_cents: int | None = None
+    stock: int | None = None
+    status: int | None = Field(None, ge=1, le=2)
+    multi_spec: bool | None = None
+    xgj_goods_id: str | None = None
+    spec_groups: list[dict] | None = None
+    template: dict | None = None
+    description: str | None = None
+
+
+class GoodsOut(BaseModel):
+    id: uuid.UUID
+    goods_no: str
+    goods_type: int
+    goods_name: str
+    logo_url: str | None = None
+    price_cents: int
+    stock: int
+    status: int
+    multi_spec: bool = False
+    xgj_goods_id: str | None = None
+    spec_groups: list[dict] | None = None
+    template: dict | None
+    description: str | None
+    specs: list[GoodsSpecOut] = []
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class XgjOrderOut(BaseModel):
+    id: uuid.UUID
+    order_no: str
+    out_order_no: str
+    goods_no: str
+    spec_id: uuid.UUID | None
+    goods_type: int
+    status: int
+    quantity: int
+    total_price_cents: int
+    buyer_info: dict | None
+    delivery_info: dict | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── 规格配置（批量设置）─────────────────────────────────────────────
+class SpecVariantIn(BaseModel):
+    """单个组合变体"""
+    spec_name: str = Field(..., max_length=200)
+    price_cents: int = 0
+    stock: int = 0
+    enabled: bool = True
+    sku_bindings: list[SpecSkuBindingIn] = []
+
+
+class SpecConfigIn(BaseModel):
+    """PUT /goods/{id}/spec-config 整体提交"""
+    spec_groups: list[dict] = Field(..., max_length=2)
+    variants: list[SpecVariantIn] = []
+
+
+def validate_spec_groups(groups: list[dict]) -> None:
+    """校验规格维度约束，不通过则抛 ValueError。"""
+    if len(groups) > 2:
+        raise ValueError("最多添加 2 个商品规格")
+    for i, g in enumerate(groups):
+        name = g.get("name", "")
+        values = g.get("values", [])
+        if not name or not isinstance(name, str):
+            raise ValueError(f"规格 {i+1} 名称不能为空")
+        if not isinstance(values, list) or len(values) == 0:
+            raise ValueError(f"规格「{name}」至少需要 1 个属性值")
+        if len(values) > 150:
+            raise ValueError(f"规格「{name}」属性值不能超过 150 个（当前 {len(values)}）")
+    if len(groups) == 2:
+        v1 = len(groups[0].get("values", []))
+        v2 = len(groups[1].get("values", []))
+        if v1 * v2 > 400:
+            raise ValueError(
+                f"两个规格的属性值组合不能超过 400 个（当前 {v1}×{v2}={v1*v2}）"
+            )
+

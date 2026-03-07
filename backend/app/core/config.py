@@ -50,6 +50,21 @@ class Settings(BaseSettings):
     ANTHROPIC_IMAGE_MODEL: str = "claude-opus-4-5"
     ANTHROPIC_TEXT_MODEL: str = "claude-opus-4-5"
 
+    # --- 闲管家开放平台（进销存/ERP）---
+    XGJ_ERP_APP_KEY: str = ""
+    XGJ_ERP_APP_SECRET: str = ""
+
+    # --- 闲管家虚拟货源 ---
+    XGJ_VIRTUAL_APP_KEY: str = ""
+    XGJ_VIRTUAL_APP_SECRET: str = ""
+    XGJ_VIRTUAL_MCH_ID: str = ""
+    XGJ_VIRTUAL_MCH_SECRET: str = ""
+
+    # --- 闲管家虚拟货源对外网关 ---
+    # 外部可访问的网关根 URL，用于闲管家回调/设置货源地址
+    # 解决内网部署 + 多层反代场景下闲管家找不到的问题
+    XGJ_BASE_URL: str = ""
+
     # --- Webhook ---
     # 对外可访问的服务根 URL，用于生成 token_url 写入 webhook 通知
     BASE_URL: str = "http://localhost:8000"
