@@ -39,16 +39,10 @@ class OpenAIProvider(BaseProvider):
                 "openai 未安装，请执行: pip install openai"
             ) from exc
 
-        import httpx
-        http_client = httpx.Client(
-            proxy="http://127.0.0.1:8080",
-            verify=False,
-        )
         client = OpenAI(
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL or None,
             timeout=600.0,
-            http_client=http_client,
         )
 
         # 构建消息 content（文本在前，图像在后）
