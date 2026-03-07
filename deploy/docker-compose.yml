@@ -92,6 +92,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+    deploy:
+      replicas: 3
 
   # ─── Nginx 网关（唯一对外暴露端口，含前端静态文件） ─────────
   nginx:
