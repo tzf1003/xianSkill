@@ -115,6 +115,12 @@
                 </div>
               </div>
 
+              <div class="og-body">
+                <label class="sub-label">描述（展示在标题下方，可选）</label>
+                <textarea v-model="grp.description" class="field-textarea sm-area" rows="2"
+                  placeholder="例如：在不改变人物身份和照片质感的前提下增强清晰度。" />
+              </div>
+
               <!-- Toggle body -->
               <div v-if="grp.type === 'toggle'" class="og-body">
                 <div class="row-two">
@@ -220,7 +226,7 @@ interface Choice {
   id: string; label: string; icon: string; description: string; prompt_addition: string
 }
 interface OptionGroup {
-  id: string; label: string; icon: string
+  id: string; label: string; icon: string; description: string
   type: 'toggle' | 'single_choice'
   default: string | boolean
   prompt_addition: string   // for toggle
@@ -231,7 +237,7 @@ function genId(prefix = 'opt'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 7)}`
 }
 function emptyGroup(): OptionGroup {
-  return { id: genId('grp'), label: '', icon: '', type: 'toggle', default: false, prompt_addition: '', choices: [] }
+  return { id: genId('grp'), label: '', icon: '', description: '', type: 'toggle', default: false, prompt_addition: '', choices: [] }
 }
 function emptyChoice(): Choice {
   return { id: genId('ch'), label: '', icon: '', description: '', prompt_addition: '' }
@@ -249,6 +255,7 @@ function parseOptions(raw: unknown): OptionGroup[] {
       id: String(grp.id ?? ''),
       label: String(grp.label ?? ''),
       icon: String(grp.icon ?? ''),
+      description: String(grp.description ?? ''),
       type: grp.type === 'single_choice' ? 'single_choice' : 'toggle',
       default: grp.type === 'single_choice' ? String(grp.default ?? '') : Boolean(grp.default),
       prompt_addition: String(grp.prompt_addition ?? ''),
@@ -273,6 +280,7 @@ function serializeOptions(groups: OptionGroup[]): Record<string, unknown> | unde
       const base: Record<string, unknown> = {
         id: g.id, label: g.label, type: g.type, icon: g.icon || undefined,
       }
+      if (g.description) base.description = g.description
       if (g.type === 'toggle') {
         base.default = g.default
         if (g.prompt_addition) base.prompt_addition = g.prompt_addition

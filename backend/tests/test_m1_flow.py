@@ -5,17 +5,30 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import settings
+
+
+async def _admin_headers(client: AsyncClient) -> dict[str, str]:
+    resp = await client.post("/v1/admin/login", json={
+        "username": settings.ADMIN_USERNAME,
+        "password": settings.ADMIN_PASSWORD,
+    })
+    assert resp.status_code == 200
+    token = resp.json()["data"]["token"]
+    return {"Authorization": f"Bearer {token}"}
+
 
 @pytest.mark.asyncio
 async def test_full_flow(client: AsyncClient):
     """创建 skill+sku+order+token，提交 job，幂等重复提交不重复扣次，finalize。"""
+    headers = await _admin_headers(client)
 
     # 1. 创建 Skill
     resp = await client.post("/v1/admin/skills", json={
         "name": "老照片修复",
         "type": "prompt",
         "description": "AI 修复老旧照片",
-    })
+    }, headers=headers)
     assert resp.status_code == 200
     skill_data = resp.json()["data"]
     skill_id = skill_data["id"]
@@ -27,7 +40,7 @@ async def test_full_flow(client: AsyncClient):
         "name": "老照片修复-基础版",
         "price_cents": 999,
         "total_uses": 3,
-    })
+    }, headers=headers)
     assert resp.status_code == 200
     sku_data = resp.json()["data"]
     sku_id = sku_data["id"]
@@ -37,7 +50,7 @@ async def test_full_flow(client: AsyncClient):
     resp = await client.post("/v1/admin/orders", json={
         "sku_id": sku_id,
         "channel": "xianyu",
-    })
+    }, headers=headers)
     assert resp.status_code == 200
     order_data = resp.json()["data"]
     assert order_data["token_url"] is not None
@@ -87,7 +100,7 @@ async def test_full_flow(client: AsyncClient):
     assert resp.json()["data"]["status"] == "queued"
 
     # 9. Finalize（成功）
-    resp = await client.post(f"/v1/admin/jobs/{job_id}/finalize?success=true")
+    resp = await client.post(f"/v1/admin/jobs/{job_id}/finalize?success=true", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "succeeded"
 
@@ -104,6 +117,58 @@ async def test_token_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_public_token_returns_toggle_description(client: AsyncClient):
+    headers = await _admin_headers(client)
+
+    resp = await client.post("/v1/admin/skills", json={
+        "name": "照片增强",
+        "type": "prompt",
+    }, headers=headers)
+    assert resp.status_code == 200
+    skill_id = resp.json()["data"]["id"]
+
+    resp = await client.post("/v1/admin/projects", json={
+        "name": "老照片增强",
+        "slug": "restore-enhance",
+        "skill_id": skill_id,
+        "options": {
+            "option_groups": [
+                {
+                    "id": "grp_0bobj",
+                    "type": "toggle",
+                    "label": "超清修复",
+                    "description": "在高保真修复后进一步提升清晰度，但不虚构细节。",
+                    "default": True,
+                    "prompt_addition": "请在高保真修复完成后进行超清修复。",
+                }
+            ]
+        },
+    }, headers=headers)
+    assert resp.status_code == 200
+    project_id = resp.json()["data"]["id"]
+
+    resp = await client.post("/v1/admin/skus", json={
+        "skill_id": skill_id,
+        "project_id": project_id,
+        "name": "照片增强-标准版",
+        "price_cents": 999,
+        "total_uses": 1,
+    }, headers=headers)
+    assert resp.status_code == 200
+    sku_id = resp.json()["data"]["id"]
+
+    resp = await client.post("/v1/admin/orders", json={"sku_id": sku_id}, headers=headers)
+    assert resp.status_code == 200
+    token_value = resp.json()["data"]["token_url"].split("/")[-1]
+
+    resp = await client.get(f"/v1/public/token/{token_value}")
+    assert resp.status_code == 200
+    group = resp.json()["data"]["project"]["options"]["option_groups"][0]
+    assert group["type"] == "toggle"
+    assert group["description"] == "在高保真修复后进一步提升清晰度，但不虚构细节。"
+
+
+@pytest.mark.asyncio
 async def test_submit_job_invalid_token(client: AsyncClient):
     resp = await client.post("/v1/public/job", json={
         "token": "nonexistent",
@@ -114,38 +179,42 @@ async def test_submit_job_invalid_token(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_finalize_already_finalized(client: AsyncClient):
     """连续 finalize 同一 job 应返回 409。"""
+    headers = await _admin_headers(client)
+
     # 快速创建 skill → sku → order → job
-    resp = await client.post("/v1/admin/skills", json={"name": "s", "type": "prompt"})
+    resp = await client.post("/v1/admin/skills", json={"name": "s", "type": "prompt"}, headers=headers)
     skill_id = resp.json()["data"]["id"]
 
-    resp = await client.post("/v1/admin/skus", json={"skill_id": skill_id, "name": "k", "total_uses": 5})
+    resp = await client.post("/v1/admin/skus", json={"skill_id": skill_id, "name": "k", "total_uses": 5}, headers=headers)
     sku_id = resp.json()["data"]["id"]
 
-    resp = await client.post("/v1/admin/orders", json={"sku_id": sku_id})
+    resp = await client.post("/v1/admin/orders", json={"sku_id": sku_id}, headers=headers)
     token_value = resp.json()["data"]["token_url"].split("/")[-1]
 
     resp = await client.post("/v1/public/job", json={"token": token_value})
     job_id = resp.json()["data"]["id"]
 
     # 第一次 finalize
-    resp = await client.post(f"/v1/admin/jobs/{job_id}/finalize?success=true")
+    resp = await client.post(f"/v1/admin/jobs/{job_id}/finalize?success=true", headers=headers)
     assert resp.status_code == 200
 
     # 第二次 finalize — 应返回 409
-    resp = await client.post(f"/v1/admin/jobs/{job_id}/finalize?success=true")
+    resp = await client.post(f"/v1/admin/jobs/{job_id}/finalize?success=true", headers=headers)
     assert resp.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_exhaust_token_uses(client: AsyncClient):
     """用完所有次数后，提交应被拒绝。"""
-    resp = await client.post("/v1/admin/skills", json={"name": "x", "type": "prompt"})
+    headers = await _admin_headers(client)
+
+    resp = await client.post("/v1/admin/skills", json={"name": "x", "type": "prompt"}, headers=headers)
     skill_id = resp.json()["data"]["id"]
 
-    resp = await client.post("/v1/admin/skus", json={"skill_id": skill_id, "name": "k", "total_uses": 1})
+    resp = await client.post("/v1/admin/skus", json={"skill_id": skill_id, "name": "k", "total_uses": 1}, headers=headers)
     sku_id = resp.json()["data"]["id"]
 
-    resp = await client.post("/v1/admin/orders", json={"sku_id": sku_id})
+    resp = await client.post("/v1/admin/orders", json={"sku_id": sku_id}, headers=headers)
     token_value = resp.json()["data"]["token_url"].split("/")[-1]
 
     # 第一次提交 — 成功

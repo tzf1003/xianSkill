@@ -16,13 +16,36 @@ class ApiResponse(BaseModel):
 
 
 # ── Project ──────────────────────────────────────────────────────────
+class ProjectOptionChoice(BaseModel):
+    id: str
+    label: str
+    icon: str | None = None
+    description: str | None = None
+    prompt_addition: str | None = None
+
+
+class ProjectOptionGroup(BaseModel):
+    id: str
+    label: str
+    description: str | None = None
+    type: str = Field(..., pattern=r"^(toggle|single_choice)$")
+    default: bool | str | None = None
+    icon: str | None = None
+    prompt_addition: str | None = None
+    choices: list[ProjectOptionChoice] = Field(default_factory=list)
+
+
+class ProjectOptions(BaseModel):
+    option_groups: list[ProjectOptionGroup] = Field(default_factory=list)
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(..., max_length=200)
     slug: str = Field(..., max_length=100, pattern=r"^[a-z0-9-]+$")
     description: str | None = None
     cover_url: str | None = None
     type: str = "photo_restore"
-    options: dict | None = None  # 选项组 JSON（见 Project 模型注释）
+    options: ProjectOptions | None = None
     skill_id: uuid.UUID | None = None
 
 
@@ -31,7 +54,7 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
     cover_url: str | None = None
     type: str | None = None
-    options: dict | None = None
+    options: ProjectOptions | None = None
     enabled: bool | None = None
     skill_id: uuid.UUID | None = None
 
@@ -43,7 +66,7 @@ class ProjectOut(BaseModel):
     description: str | None
     cover_url: str | None
     type: str
-    options: dict | None
+    options: ProjectOptions | None
     enabled: bool
     skill_id: uuid.UUID | None = None
     created_at: datetime

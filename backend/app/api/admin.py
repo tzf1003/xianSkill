@@ -164,7 +164,7 @@ async def create_project(body: ProjectCreate, db: DbSession) -> ApiResponse:
         description=body.description,
         cover_url=body.cover_url,
         type=body.type,
-        options=body.options,
+        options=body.options.model_dump(exclude_none=True) if body.options else None,
         skill_id=body.skill_id,
     )
     db.add(project)
@@ -187,6 +187,8 @@ async def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: DbSessi
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     for field, value in body.model_dump(exclude_unset=True).items():
+        if field == "options" and isinstance(value, BaseModel):
+            value = value.model_dump(exclude_none=True)
         setattr(project, field, value)
     await db.commit()
     await db.refresh(project)
