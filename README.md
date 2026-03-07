@@ -41,7 +41,7 @@ docker compose up -d          # 启动 Postgres、Redis、MinIO
 容器启动后：
 | 服务     | 地址                    |
 |----------|-------------------------|
-| Postgres | localhost:5432          |
+| Postgres | localhost:15432         |
 | Redis    | localhost:6379          |
 | MinIO    | localhost:9000 (API)    |
 | MinIO Console | localhost:9001     |
@@ -98,7 +98,7 @@ pytest
 
 | 变量名           | 默认值                                                     | 说明                    |
 |------------------|------------------------------------------------------------|-------------------------|
-| DATABASE_URL     | postgresql+asyncpg://postgres:postgres@localhost:5432/skill_platform | 数据库连接串            |
+| DATABASE_URL     | postgresql+asyncpg://postgres:postgres@localhost:15432/skill_platform | 数据库连接串            |
 | REDIS_URL        | redis://localhost:6379/0                                   | Redis 连接串            |
 | MINIO_ENDPOINT   | localhost:9000                                             | MinIO 地址              |
 | MINIO_ACCESS_KEY | minioadmin                                                 | MinIO Access Key        |

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # --- Database (Postgres) ---
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/skill_platform"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:15432/skill_platform"
 
     # --- Redis ---
     REDIS_URL: str = "redis://localhost:6378/0"
