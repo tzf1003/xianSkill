@@ -39,6 +39,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-zf123456}
     volumes:
       - minio_data:/data
+    ports:
+      - "6679:9000"
     networks:
       - internal
     healthcheck:
@@ -103,6 +105,7 @@ services:
     restart: unless-stopped
     ports:
       - "6677:80"
+      - "6678:81"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
