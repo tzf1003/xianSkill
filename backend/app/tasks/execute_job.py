@@ -92,7 +92,7 @@ async def run_job(job_id_str: str) -> None:
         await session.commit()
 
         _MAX_RETRIES = 2
-        _TIMEOUT_SECONDS = 180  # 3 分钟
+        _TIMEOUT_SECONDS = 300  # 5 分钟
 
         run_result = None
         try:

@@ -39,20 +39,40 @@ class OpenAIProvider(BaseProvider):
                 "openai 未安装，请执行: pip install openai"
             ) from exc
 
+        import httpx
+        http_client = httpx.Client(
+            proxy="http://127.0.0.1:8080",
+            verify=False,
+        )
         client = OpenAI(
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL or None,
+            timeout=600.0,
+            http_client=http_client,
         )
 
-        # 构建消息 content
+        # 构建消息 content（文本在前，图像在后）
         content: list = []
         input_mime = ""
+
+        content.append({"type": "text", "text": prompt})
+
         if image_bytes:
+            # 校验是否为真实图片，防止伪造后缀上传非图片文件
+            _SUPPORTED_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
             try:
+                img_obj = Image.open(io.BytesIO(image_bytes))
+                img_obj.verify()  # 校验图片数据完整性
+                # verify() 后需重新打开获取 format
                 img_obj = Image.open(io.BytesIO(image_bytes))
                 fmt = (img_obj.format or "JPEG").upper()
                 input_mime = f"image/{fmt.lower()}"
             except Exception:
+                raise RuntimeError(
+                    "上传的文件不是有效的图片格式，请上传 JPEG/PNG/GIF/WebP 图片"
+                )
+            if input_mime not in _SUPPORTED_MIMES:
+                input_mime = "image/jpeg"
                 input_mime = "image/jpeg"
 
             b64 = base64.standard_b64encode(image_bytes).decode()
@@ -60,8 +80,6 @@ class OpenAIProvider(BaseProvider):
                 "type": "image_url",
                 "image_url": {"url": f"data:{input_mime};base64,{b64}"},
             })
-
-        content.append({"type": "text", "text": prompt})
 
         logger.info(
             "OpenAI 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, "
@@ -75,27 +93,32 @@ class OpenAIProvider(BaseProvider):
         )
 
         t0 = time.perf_counter()
-        response = client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=settings.OPENAI_IMAGE_MODEL,
             messages=[{"role": "user", "content": content}],
+            stream=True,
+            stream_options={"include_usage": True},
         )
+
+        # 收集流式响应
+        full_text = ""
+        finish_reason = ""
+        for chunk in stream:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    full_text += delta.content
+                if chunk.choices[0].finish_reason:
+                    finish_reason = chunk.choices[0].finish_reason
         duration_ms = (time.perf_counter() - t0) * 1000
 
-        choice = response.choices[0]
-        finish_reason = choice.finish_reason or ""
-        msg_content = choice.message.content
+        msg_content = full_text
 
-        # ── 尝试从响应中提取图像数据 ─────────────────────────────────
-        # 兼容以下场景：
-        # 1. content 是 list，块类型为 image_url，值为 data URI
-        # 2. content 是 list，块类型为 image_url，值为 https URL（不支持，记录警告）
-        # 3. content 是纯字符串，包含 Markdown 图像 ![...](data:image/...;base64,...) 格式
-        # 4. content 是纯字符串，包含裸 data URI（data:image/...;base64,...）
+        # ── 从流式响应文本中提取图像数据 ────────────────────────────
         def _try_extract_b64(data_uri: str) -> bytes | None:
             """从 data URI 中提取 base64 并解码，失败返回 None。"""
             try:
                 _, b64_part = data_uri.split(",", 1)
-                # base64 payload 可能被截断显示，但实际响应是完整的
                 return base64.b64decode(b64_part + "==")  # 补齐 padding
             except Exception:
                 return None
@@ -106,37 +129,7 @@ class OpenAIProvider(BaseProvider):
             result_img.save(buf, format="PNG")
             return buf.getvalue()
 
-        if isinstance(msg_content, list):
-            for block in msg_content:
-                block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
-                if block_type == "image_url":
-                    url_obj = block.get("image_url") if isinstance(block, dict) else getattr(block, "image_url", None)
-                    url = (url_obj.get("url") if isinstance(url_obj, dict) else getattr(url_obj, "url", "")) or ""
-                    if url.startswith("data:image/"):
-                        raw = _try_extract_b64(url)
-                        if raw:
-                            png_bytes = _bytes_to_png(raw)
-                            logger.info(
-                                "OpenAI 返回图像（list image_url data URI）: %d bytes, duration=%.0f ms",
-                                len(png_bytes), duration_ms,
-                            )
-                            return ProviderResult(
-                                image_bytes=png_bytes,
-                                model=settings.OPENAI_IMAGE_MODEL,
-                                finish_reason=finish_reason,
-                                response_text="",
-                                image_mime="image/png",
-                                prompt_len=len(prompt),
-                                input_image_bytes=len(image_bytes) if image_bytes else 0,
-                                output_image_bytes=len(png_bytes),
-                                duration_ms=round(duration_ms, 1),
-                                extra={"input_mime": input_mime},
-                            )
-                    elif url.startswith("https://"):
-                        logger.warning("OpenAI 返回了 URL 图像，暂不支持下载: %s", url[:100])
-
-        # ── 纯文本中提取图像（Markdown / 裸 data URI） ───────────────
-        if isinstance(msg_content, str):
+        if msg_content:
             # 尝试 Markdown 格式：![...](data:image/xxx;base64,...)
             md_match = re.search(r'!\[[^\]]*\]\((data:image/[^;]+;base64,[A-Za-z0-9+/=\s]+)\)', msg_content)
             if not md_match:

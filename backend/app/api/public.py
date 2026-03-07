@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from PIL import Image
 from sqlalchemy import select
 
 from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, ProjectOut, UploadOut
@@ -17,6 +19,41 @@ from app.services import job_service, token_service
 from app.tasks.execute_job import execute_job
 
 router = APIRouter(prefix="/v1/public", tags=["public"])
+
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024   # 20 MB 硬上限
+_COMPRESS_THRESHOLD = 5 * 1024 * 1024   # 超过 5 MB 尝试压缩
+
+
+def _compress_image(data: bytes) -> tuple[bytes, str]:
+    """尝试无损/近无损压缩图片。返回 (压缩后字节, content_type)。
+
+    策略：
+    - PNG → 用 Pillow 重新保存（optimize），仍为 PNG
+    - JPEG/MPO 等 → 以 quality=90 重新编码 JPEG（近无损，体积大幅下降）
+    - WebP → quality=90 有损重编码
+    - 其他/失败 → 返回原始数据
+    """
+    try:
+        img = Image.open(io.BytesIO(data))
+        fmt = (img.format or "").upper()
+    except Exception:
+        return data, "application/octet-stream"
+
+    buf = io.BytesIO()
+    if fmt == "PNG":
+        img.save(buf, format="PNG", optimize=True)
+        return buf.getvalue(), "image/png"
+    elif fmt in ("JPEG", "MPO", ""):
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    elif fmt == "WEBP":
+        img.save(buf, format="WEBP", quality=90)
+        return buf.getvalue(), "image/webp"
+    else:
+        # GIF 等格式不压缩
+        return data, f"image/{fmt.lower()}"
 
 
 @router.get("/token/{token_value}")
@@ -106,13 +143,22 @@ async def upload_file(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件大小 {len(data) / 1024 / 1024:.1f}MB 超过上限 20MB",
+        )
+
+    content_type = file.content_type or "application/octet-stream"
+    if len(data) > _COMPRESS_THRESHOLD:
+        data, content_type = _compress_image(data)
 
     file_uuid = uuid.uuid4()
     safe_name = (file.filename or "upload").replace(" ", "_")
     object_key = f"uploads/{file_uuid}/{safe_name}"
     input_hash = hashlib.sha256(data).hexdigest()
 
-    storage.put_bytes(object_key, data, file.content_type or "application/octet-stream")
+    storage.put_bytes(object_key, data, content_type)
 
     return ApiResponse(data=UploadOut(object_key=object_key, input_hash=input_hash).model_dump())
 

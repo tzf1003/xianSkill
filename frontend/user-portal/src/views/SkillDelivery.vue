@@ -71,6 +71,7 @@
           </template>
         </div>
         <input ref="fileInput" type="file" accept="image/*" hidden @change="onFileChange" />
+        <p v-if="fileSizeError" class="file-size-error">{{ fileSizeError }}</p>
         <div class="step-actions">
           <button class="btn-next" :disabled="!selectedFile" @click="wizardStep = hasOptions ? 2 : 3">
             下一步：{{ hasOptions ? '定制选项' : '填写需求' }}
@@ -313,6 +314,7 @@ const tokenInfo = ref<TokenInfo | null>(null)
 const projectInfo = ref<ProjectInfo | null>(null)
 const selectedFile = ref<File | null>(null)
 const previewUrl = ref('')
+const fileSizeError = ref('')
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedOptions = ref(new Set<string>())
@@ -427,8 +429,18 @@ function stopPoll() {
 function triggerFileInput() { fileInput.value?.click() }
 function onFileChange(e: Event) { const f = (e.target as HTMLInputElement).files?.[0]; if (f) setFile(f) }
 function onDrop(e: DragEvent) { dragging.value = false; const f = e.dataTransfer?.files?.[0]; if (f?.type.startsWith('image/')) setFile(f) }
-function setFile(f: File) { if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); selectedFile.value = f; previewUrl.value = URL.createObjectURL(f) }
-function clearFile() { selectedFile.value = null; if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' } }
+const MAX_FILE_SIZE = 20 * 1024 * 1024
+function setFile(f: File) {
+  fileSizeError.value = ''
+  if (f.size > MAX_FILE_SIZE) {
+    fileSizeError.value = `图片大小 ${(f.size / 1024 / 1024).toFixed(1)}MB 超过 20MB 上限，请压缩后重试`
+    return
+  }
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  selectedFile.value = f
+  previewUrl.value = URL.createObjectURL(f)
+}
+function clearFile() { selectedFile.value = null; fileSizeError.value = ''; if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' } }
 
 function toggleOption(id: string) { if (selectedOptions.value.has(id)) selectedOptions.value.delete(id); else selectedOptions.value.add(id); selectedOptions.value = new Set(selectedOptions.value) }
 function setChoice(gid: string, cid: string) { singleChoiceMap.value.set(gid, cid); singleChoiceMap.value = new Map(singleChoiceMap.value) }
@@ -482,6 +494,10 @@ function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
 </script>
 
 <style scoped>
+.file-size-error {
+  color: #EF4444; font-size: 14px; margin: 8px 0 0; padding: 8px 12px;
+  background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; text-align: center;
+}
 .wizard-page {
   --bg: #F5F3FF; --card: #FFFFFF; --accent: #8B5CF6; --accent2: #EC4899;
   --text: #1a1a2e; --text-soft: #6B7280; --border: #E5E7EB;
