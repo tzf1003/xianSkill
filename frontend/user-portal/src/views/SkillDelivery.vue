@@ -93,9 +93,8 @@
             <p v-if="group.description" class="og-desc">{{ group.description }}</p>
             <!-- Toggle -->
             <div v-if="group.type === 'toggle'" class="toggle-row" @click="toggleOption(group.id)">
-              <div class="toggle-info">
-                <span class="toggle-icon">{{ group.icon || '' }}</span>
-                <span class="toggle-text">{{ group.description }}</span>
+              <div v-if="group.icon" class="toggle-info">
+                <span class="toggle-icon">{{ group.icon }}</span>
               </div>
               <div class="toggle-switch" :class="{ on: selectedOptions.has(group.id) }">
                 <div class="toggle-thumb" />
@@ -580,7 +579,6 @@ function fmtDate(s: string) { return new Date(s).toLocaleString('zh-CN') }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; cursor: pointer; gap: 12px; padding: 4px 0; }
 .toggle-info { display: flex; align-items: center; gap: 10px; }
 .toggle-icon { font-size: 1.4rem; }
-.toggle-text { font-size: 0.95rem; font-weight: 500; }
 .toggle-switch { width: 46px; height: 26px; border-radius: 13px; background: var(--border); position: relative; flex-shrink: 0; transition: background 0.25s; }
 .toggle-switch.on { background: var(--accent); }
 .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: white; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,0.2); transition: transform 0.25s; }
