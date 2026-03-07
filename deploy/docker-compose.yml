@@ -40,7 +40,7 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "6679:9000"
+      - "6679:9001"
     networks:
       - internal
     healthcheck:
