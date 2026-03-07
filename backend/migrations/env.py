@@ -3,6 +3,7 @@
 The app runtime continues to use asyncpg; Alembic does not need async.
 """
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -13,6 +14,13 @@ import app.domain.models  # noqa: F401
 from app.domain.models import Base
 
 config = context.config
+
+# 支持从环境变量 DATABASE_URL 覆盖（asyncpg → psycopg2）
+db_url = os.environ.get("DATABASE_URL", "")
+if db_url:
+    sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    config.set_main_option("sqlalchemy.url", sync_url)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

@@ -1,0 +1,21 @@
+# 阶段 1：构建 user-portal
+FROM node:20-alpine AS portal-build
+WORKDIR /app
+COPY frontend/user-portal/package.json ./
+RUN npm install
+COPY frontend/user-portal/ .
+RUN npm run build
+
+# 阶段 2：构建 admin-console（base=/admin/）
+FROM node:20-alpine AS admin-build
+WORKDIR /app
+COPY frontend/admin-console/package.json ./
+RUN npm install
+COPY frontend/admin-console/ .
+ENV VITE_BASE=/admin/
+RUN npm run build
+
+# 阶段 3：Nginx 合并两个前端产物
+FROM nginx:alpine
+COPY --from=portal-build /app/dist /usr/share/nginx/html/portal
+COPY --from=admin-build  /app/dist /usr/share/nginx/html/admin

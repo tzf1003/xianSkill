@@ -1,6 +1,7 @@
 version: "3.9"
 
 services:
+  # ─── 基础设施（内网，不对外暴露端口） ────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -8,10 +9,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: skill_platform
-    ports:
-      - "15432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -21,8 +22,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:6378:6379"
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -34,34 +35,32 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: tzf1003
-      MINIO_ROOT_PASSWORD: zf123456
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-tzf1003}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-zf123456}
     volumes:
       - minio_data:/data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 10
 
+  # ─── 后端 API ───────────────────────────────────────────────
   backend:
     build:
       context: ../backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    env_file: ../backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/skill_platform
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: tzf1003
-      MINIO_SECRET_KEY: zf123456
-      MINIO_BUCKET: skill-assets
       MINIO_SECURE: "false"
+    networks:
+      - internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,6 +68,49 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+
+  # ─── Worker（与后端共享镜像，跳过迁移直接启动） ──────────────
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: []
+    command: ["python", "worker.py"]
+    env_file: ../backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/skill_platform
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_SECURE: "false"
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  # ─── Nginx 网关（唯一对外暴露端口，含前端静态文件） ─────────
+  nginx:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - internal
+    depends_on:
+      - backend
+
+networks:
+  internal:
+    driver: bridge
 
 volumes:
   pg_data:
