@@ -304,6 +304,8 @@ class GoodsSpecCreate(BaseModel):
     price_cents: int = 0
     stock: int = 0
     enabled: bool = True
+    xgj_sku_text: str | None = None
+    xgj_outer_id: str | None = None
     sku_bindings: list[SpecSkuBindingIn] = []
 
 
@@ -312,6 +314,8 @@ class GoodsSpecUpdate(BaseModel):
     price_cents: int | None = None
     stock: int | None = None
     enabled: bool | None = None
+    xgj_sku_text: str | None = None
+    xgj_outer_id: str | None = None
 
 
 class GoodsSpecOut(BaseModel):
@@ -321,8 +325,114 @@ class GoodsSpecOut(BaseModel):
     price_cents: int
     stock: int
     enabled: bool
+    xgj_sku_text: str | None = None
+    xgj_outer_id: str | None = None
     sku_bindings: list[SpecSkuBindingOut] = []
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GoodsXgjProfileIn(BaseModel):
+    item_biz_type: int
+    sp_biz_type: int
+    category_id: int | None = None
+    channel_cat_id: str = Field(..., max_length=100)
+    original_price_cents: int = 0
+    express_fee_cents: int = 0
+    stuff_status: int = 0
+    notify_url: str | None = Field(None, max_length=2000)
+    flash_sale_type: int | None = None
+    is_tax_included: bool = False
+
+
+class GoodsXgjProfileUpdate(BaseModel):
+    item_biz_type: int | None = None
+    sp_biz_type: int | None = None
+    category_id: int | None = None
+    channel_cat_id: str | None = Field(None, max_length=100)
+    original_price_cents: int | None = None
+    express_fee_cents: int | None = None
+    stuff_status: int | None = None
+    notify_url: str | None = Field(None, max_length=2000)
+    flash_sale_type: int | None = None
+    is_tax_included: bool | None = None
+
+
+class GoodsXgjProfileOut(BaseModel):
+    item_biz_type: int
+    sp_biz_type: int
+    category_id: int | None
+    channel_cat_id: str
+    original_price_cents: int
+    express_fee_cents: int
+    stuff_status: int
+    notify_url: str | None
+    flash_sale_type: int | None
+    is_tax_included: bool
+    product_status: int | None
+    publish_status: int | None
+
+    model_config = {"from_attributes": True}
+
+
+class GoodsXgjPropertyIn(BaseModel):
+    property_id: str = Field(..., max_length=100)
+    property_name: str = Field(..., max_length=100)
+    value_id: str = Field(..., max_length=100)
+    value_name: str = Field(..., max_length=100)
+    sort_order: int = 0
+
+
+class GoodsXgjPropertyOut(BaseModel):
+    id: uuid.UUID
+    property_id: str
+    property_name: str
+    value_id: str
+    value_name: str
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+class GoodsXgjPublishShopImageIn(BaseModel):
+    image_url: str = Field(..., max_length=500)
+    sort_order: int = 0
+
+
+class GoodsXgjPublishShopImageOut(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+class GoodsXgjPublishShopIn(BaseModel):
+    user_name: str = Field(..., max_length=100)
+    province: int
+    city: int
+    district: int
+    title: str = Field(..., max_length=60)
+    content: str = Field(..., min_length=5, max_length=5000)
+    white_image_url: str | None = Field(None, max_length=500)
+    service_support: str | None = Field(None, max_length=200)
+    sort_order: int = 0
+    images: list[GoodsXgjPublishShopImageIn] = Field(default_factory=list, min_length=1)
+
+
+class GoodsXgjPublishShopOut(BaseModel):
+    id: uuid.UUID
+    user_name: str
+    province: int
+    city: int
+    district: int
+    title: str
+    content: str
+    white_image_url: str | None
+    service_support: str | None
+    sort_order: int
+    images: list[GoodsXgjPublishShopImageOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -338,6 +448,9 @@ class GoodsCreate(BaseModel):
     spec_groups: list[dict] | None = None  # [{name, values}]
     template: dict | None = None
     description: str | None = None
+    xgj_profile: GoodsXgjProfileIn
+    xgj_properties: list[GoodsXgjPropertyIn] = []
+    xgj_publish_shops: list[GoodsXgjPublishShopIn] = Field(..., min_length=1)
     specs: list[GoodsSpecCreate] = []
 
 
@@ -353,6 +466,9 @@ class GoodsUpdate(BaseModel):
     spec_groups: list[dict] | None = None
     template: dict | None = None
     description: str | None = None
+    xgj_profile: GoodsXgjProfileUpdate | None = None
+    xgj_properties: list[GoodsXgjPropertyIn] | None = None
+    xgj_publish_shops: list[GoodsXgjPublishShopIn] | None = None
 
 
 class GoodsOut(BaseModel):
@@ -369,6 +485,9 @@ class GoodsOut(BaseModel):
     spec_groups: list[dict] | None = None
     template: dict | None
     description: str | None
+    xgj_profile: GoodsXgjProfileOut | None = None
+    xgj_properties: list[GoodsXgjPropertyOut] = []
+    xgj_publish_shops: list[GoodsXgjPublishShopOut] = []
     specs: list[GoodsSpecOut] = []
     created_at: datetime
     updated_at: datetime
@@ -400,6 +519,8 @@ class SpecVariantIn(BaseModel):
     price_cents: int = 0
     stock: int = 0
     enabled: bool = True
+    xgj_sku_text: str | None = None
+    xgj_outer_id: str | None = None
     sku_bindings: list[SpecSkuBindingIn] = []
 
 

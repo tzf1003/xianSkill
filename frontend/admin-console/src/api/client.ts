@@ -226,6 +226,8 @@ export interface GoodsSpec {
   price_cents: number
   stock: number
   enabled: boolean
+  xgj_sku_text: string | null
+  xgj_outer_id: string | null
   sku_bindings: SpecSkuBinding[]
   created_at: string
 }
@@ -233,6 +235,50 @@ export interface GoodsSpec {
 export interface SpecGroup {
   name: string
   values: string[]
+}
+
+export interface GoodsXgjProfile {
+  item_biz_type: number
+  sp_biz_type: number
+  category_id: number | null
+  channel_cat_id: string
+  original_price_cents: number
+  express_fee_cents: number
+  stuff_status: number
+  notify_url: string | null
+  flash_sale_type: number | null
+  is_tax_included: boolean
+  product_status?: number | null
+  publish_status?: number | null
+}
+
+export interface GoodsXgjProperty {
+  id?: string
+  property_id: string
+  property_name: string
+  value_id: string
+  value_name: string
+  sort_order?: number
+}
+
+export interface GoodsXgjPublishShopImage {
+  id?: string
+  image_url: string
+  sort_order?: number
+}
+
+export interface GoodsXgjPublishShop {
+  id?: string
+  user_name: string
+  province: number
+  city: number
+  district: number
+  title: string
+  content: string
+  white_image_url?: string | null
+  service_support?: string | null
+  sort_order?: number
+  images: GoodsXgjPublishShopImage[]
 }
 
 export interface Goods {
@@ -247,6 +293,9 @@ export interface Goods {
   multi_spec: boolean  // 是否多规格
   xgj_goods_id: string | null  // 闲管家商品ID
   spec_groups: SpecGroup[] | null  // 规格维度定义
+  xgj_profile: GoodsXgjProfile | null
+  xgj_properties: GoodsXgjProperty[]
+  xgj_publish_shops: GoodsXgjPublishShop[]
   template: Record<string, unknown> | null
   description: string | null
   specs: GoodsSpec[]
@@ -263,9 +312,12 @@ export interface GoodsCreate {
   status?: number
   multi_spec?: boolean
   spec_groups?: SpecGroup[] | null
+  xgj_profile: GoodsXgjProfile
+  xgj_properties?: GoodsXgjProperty[]
+  xgj_publish_shops: GoodsXgjPublishShop[]
   template?: Record<string, unknown> | null
   description?: string | null
-  specs?: { spec_name: string; price_cents?: number; stock?: number; enabled?: boolean; sku_bindings?: { timing: string; sku_id?: string | null }[] }[]
+  specs?: { spec_name: string; price_cents?: number; stock?: number; enabled?: boolean; xgj_sku_text?: string | null; xgj_outer_id?: string | null; sku_bindings?: { timing: string; sku_id?: string | null }[] }[]
 }
 
 export interface GoodsUpdate {
@@ -278,6 +330,9 @@ export interface GoodsUpdate {
   multi_spec?: boolean
   xgj_goods_id?: string | null
   spec_groups?: SpecGroup[] | null
+  xgj_profile?: Partial<GoodsXgjProfile> | null
+  xgj_properties?: GoodsXgjProperty[] | null
+  xgj_publish_shops?: GoodsXgjPublishShop[] | null
   template?: Record<string, unknown> | null
   description?: string | null
 }
@@ -287,6 +342,8 @@ export interface SpecVariantPayload {
   price_cents: number
   stock: number
   enabled?: boolean
+  xgj_sku_text?: string | null
+  xgj_outer_id?: string | null
   sku_bindings?: { timing: string; sku_id?: string | null }[]
 }
 

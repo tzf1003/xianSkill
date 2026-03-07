@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
@@ -52,6 +54,10 @@ from app.domain.models import (
     DeliveryTiming,
     Goods,
     GoodsSpec,
+    GoodsXgjProfile,
+    GoodsXgjProperty,
+    GoodsXgjPublishShop,
+    GoodsXgjPublishShopImage,
     GoodsSubscription,
     Job,
     JobStatus,
@@ -66,6 +72,8 @@ from app.domain.models import (
     Webhook,
     XgjOrder,
 )
+from app.infra.xgj.base_client import XGJApiError
+from app.infra.xgj.erp_client import XGJErpClient
 from app.services import job_service, token_service
 
 # ── 登录路由（无需鉴权）──────────────────────────────────────────────
@@ -802,7 +810,12 @@ async def list_goods(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> ApiResponse:
-    stmt = select(Goods).order_by(Goods.created_at.desc())
+    stmt = select(Goods).options(
+        selectinload(Goods.xgj_profile),
+        selectinload(Goods.xgj_properties),
+        selectinload(Goods.xgj_publish_shops).selectinload(GoodsXgjPublishShop.images),
+        selectinload(Goods.specs).selectinload(GoodsSpec.sku_bindings),
+    ).order_by(Goods.created_at.desc())
     if status is not None:
         stmt = stmt.where(Goods.status == status)
     if goods_type is not None:
@@ -819,6 +832,240 @@ async def list_goods(
         "total": total,
         "items": [GoodsOut.model_validate(g).model_dump(mode="json") for g in items],
     })
+
+
+async def _load_goods_full(db: DbSession, goods_id: uuid.UUID) -> Goods:
+    result = await db.execute(
+        select(Goods)
+        .where(Goods.id == goods_id)
+        .options(
+            selectinload(Goods.xgj_profile),
+            selectinload(Goods.xgj_properties),
+            selectinload(Goods.xgj_publish_shops).selectinload(GoodsXgjPublishShop.images),
+            selectinload(Goods.specs).selectinload(GoodsSpec.sku_bindings),
+        )
+    )
+    goods = result.scalar_one_or_none()
+    if not goods:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    return goods
+
+
+def _get_erp_client() -> XGJErpClient:
+    return XGJErpClient(
+        app_key=settings.XGJ_ERP_APP_KEY,
+        app_secret=settings.XGJ_ERP_APP_SECRET,
+    )
+
+
+def _build_xgj_sku_text(goods: Goods, spec: GoodsSpec) -> str:
+    if spec.xgj_sku_text:
+        return spec.xgj_sku_text
+    if not goods.spec_groups:
+        return spec.spec_name
+    parts = [part.strip() for part in spec.spec_name.split("/")]
+    if len(parts) != len(goods.spec_groups):
+        return spec.spec_name
+    return ";".join(
+        f"{group.get('name', '')}:{value}"
+        for group, value in zip(goods.spec_groups, parts)
+        if group.get("name") and value
+    ) or spec.spec_name
+
+
+def _apply_xgj_profile(goods: Goods, profile_data: Any, *, partial: bool) -> None:
+    if profile_data is None:
+        return
+
+    fields = [
+        "item_biz_type",
+        "sp_biz_type",
+        "category_id",
+        "channel_cat_id",
+        "original_price_cents",
+        "express_fee_cents",
+        "stuff_status",
+        "notify_url",
+        "flash_sale_type",
+        "is_tax_included",
+    ]
+    payload = profile_data.model_dump(exclude_unset=partial)
+    profile = goods.xgj_profile
+    if profile is None:
+        current = {key: payload.get(key) for key in fields}
+        missing = [key for key in ("item_biz_type", "sp_biz_type", "channel_cat_id") if not current.get(key)]
+        if missing:
+            raise HTTPException(status_code=422, detail=f"闲管家配置缺少字段: {', '.join(missing)}")
+        goods.xgj_profile = GoodsXgjProfile(goods_id=goods.id, **current)
+        return
+
+    for key, value in payload.items():
+        setattr(profile, key, value)
+
+
+def _replace_xgj_properties(goods: Goods, properties: list[Any]) -> None:
+    goods.xgj_properties = [
+        GoodsXgjProperty(
+            property_id=item.property_id,
+            property_name=item.property_name,
+            value_id=item.value_id,
+            value_name=item.value_name,
+            sort_order=item.sort_order if item.sort_order is not None else index,
+        )
+        for index, item in enumerate(properties)
+    ]
+
+
+def _replace_xgj_publish_shops(goods: Goods, shops: list[Any]) -> None:
+    goods.xgj_publish_shops = []
+    for shop_index, shop_in in enumerate(shops):
+        shop = GoodsXgjPublishShop(
+            user_name=shop_in.user_name,
+            province=shop_in.province,
+            city=shop_in.city,
+            district=shop_in.district,
+            title=shop_in.title,
+            content=shop_in.content,
+            white_image_url=shop_in.white_image_url,
+            service_support=shop_in.service_support,
+            sort_order=shop_in.sort_order if shop_in.sort_order is not None else shop_index,
+            images=[
+                GoodsXgjPublishShopImage(
+                    image_url=image.image_url,
+                    sort_order=image.sort_order if image.sort_order is not None else image_index,
+                )
+                for image_index, image in enumerate(shop_in.images)
+            ],
+        )
+        goods.xgj_publish_shops.append(shop)
+
+
+def _build_xgj_publish_shops(goods: Goods) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    shops = sorted(goods.xgj_publish_shops, key=lambda item: item.sort_order)
+    for shop in shops:
+        images = [img.image_url for img in sorted(shop.images, key=lambda item: item.sort_order)]
+        if not images and goods.logo_url:
+            images = [goods.logo_url]
+        if not images:
+            raise HTTPException(status_code=422, detail="闲管家发布店铺至少需要1张图片")
+        item = {
+            "user_name": shop.user_name,
+            "province": shop.province,
+            "city": shop.city,
+            "district": shop.district,
+            "title": shop.title,
+            "content": shop.content,
+            "images": images,
+        }
+        if shop.white_image_url:
+            item["white_images"] = shop.white_image_url
+        if shop.service_support:
+            item["service_support"] = shop.service_support
+        normalized.append(item)
+    return normalized
+
+
+def _build_xgj_product_payload(goods: Goods) -> dict[str, Any]:
+    if goods.xgj_profile is None:
+        raise HTTPException(status_code=422, detail="缺少闲管家商品配置")
+    if not goods.xgj_publish_shops:
+        raise HTTPException(status_code=422, detail="缺少闲管家发布店铺配置")
+
+    enabled_specs = [spec for spec in goods.specs if spec.enabled]
+    price = goods.price_cents
+    stock = goods.stock
+    if goods.multi_spec and enabled_specs:
+        price = min(spec.price_cents for spec in enabled_specs)
+        stock = sum(spec.stock for spec in enabled_specs)
+
+    profile = goods.xgj_profile
+    payload: dict[str, Any] = {
+        "item_biz_type": profile.item_biz_type,
+        "sp_biz_type": profile.sp_biz_type,
+        "channel_cat_id": profile.channel_cat_id,
+        "price": max(1, int(price)),
+        "original_price": max(0, int(profile.original_price_cents)),
+        "express_fee": max(0, int(profile.express_fee_cents)),
+        "stock": max(1, int(stock)),
+        "outer_id": goods.goods_no,
+        "stuff_status": profile.stuff_status,
+        "publish_shop": _build_xgj_publish_shops(goods),
+    }
+    if profile.category_id is not None:
+        payload["category_id"] = profile.category_id
+    if profile.notify_url:
+        payload["notify_url"] = profile.notify_url
+    if profile.flash_sale_type is not None:
+        payload["flash_sale_type"] = profile.flash_sale_type
+    if profile.is_tax_included:
+        payload["is_tax_included"] = profile.is_tax_included
+    if goods.xgj_properties:
+        payload["channel_pv"] = [
+            {
+                "property_id": item.property_id,
+                "property_name": item.property_name,
+                "value_id": item.value_id,
+                "value_name": item.value_name,
+            }
+            for item in sorted(goods.xgj_properties, key=lambda prop: prop.sort_order)
+        ]
+
+    if goods.multi_spec and enabled_specs:
+        payload["sku_items"] = [
+            {
+                "price": max(1, int(spec.price_cents)),
+                "stock": max(0, int(spec.stock)),
+                "sku_text": _build_xgj_sku_text(goods, spec),
+                "outer_id": spec.xgj_outer_id or str(spec.id),
+            }
+            for spec in enabled_specs
+        ]
+
+    if goods.xgj_goods_id:
+        try:
+            payload["product_id"] = int(goods.xgj_goods_id)
+        except (TypeError, ValueError):
+            payload["product_id"] = goods.xgj_goods_id
+    return payload
+
+
+async def _sync_goods_to_xgj(db: DbSession, goods_id: uuid.UUID) -> Goods:
+    goods = await _load_goods_full(db, goods_id)
+    if not settings.XGJ_ERP_APP_KEY or not settings.XGJ_ERP_APP_SECRET:
+        return goods
+
+    payload = _build_xgj_product_payload(goods)
+
+    try:
+        async with _get_erp_client() as client:
+            if goods.xgj_goods_id:
+                result = await client.edit_product(payload)
+            else:
+                result = await client.create_product(payload)
+                product_id = result.get("product_id") if isinstance(result, dict) else None
+                if product_id:
+                    goods.xgj_goods_id = str(product_id)
+            if goods.xgj_profile and isinstance(result, dict):
+                if result.get("product_status") is not None:
+                    goods.xgj_profile.product_status = result.get("product_status")
+    except XGJApiError as exc:
+        raise HTTPException(status_code=502, detail=f"同步闲管家失败: {exc.msg}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"同步闲管家失败: {exc}")
+
+    return goods
+
+
+def _apply_goods_xgj_data(goods: Goods, body: GoodsCreate | GoodsUpdate, *, partial: bool) -> None:
+    if getattr(body, "xgj_profile", None) is not None or not partial:
+        _apply_xgj_profile(goods, body.xgj_profile, partial=partial)
+    if not partial or body.xgj_properties is not None:
+        _replace_xgj_properties(goods, body.xgj_properties or [])
+    if not partial or body.xgj_publish_shops is not None:
+        _replace_xgj_publish_shops(goods, body.xgj_publish_shops or [])
 
 
 @router.post("/goods")
@@ -847,6 +1094,7 @@ async def create_goods(body: GoodsCreate, db: DbSession) -> ApiResponse:
     )
     db.add(goods)
     await db.flush()
+    _apply_goods_xgj_data(goods, body, partial=False)
 
     # 创建规格
     for spec_in in body.specs:
@@ -856,6 +1104,8 @@ async def create_goods(body: GoodsCreate, db: DbSession) -> ApiResponse:
             price_cents=spec_in.price_cents,
             stock=spec_in.stock,
             enabled=spec_in.enabled,
+            xgj_sku_text=spec_in.xgj_sku_text,
+            xgj_outer_id=spec_in.xgj_outer_id,
         )
         db.add(spec)
         await db.flush()
@@ -868,24 +1118,23 @@ async def create_goods(body: GoodsCreate, db: DbSession) -> ApiResponse:
             )
             db.add(binding)
 
+    await db.flush()
+    goods = await _sync_goods_to_xgj(db, goods.id)
     await db.commit()
-    await db.refresh(goods)
+    goods = await _load_goods_full(db, goods.id)
+    asyncio.create_task(_notify_goods_change(db, goods))
     return ApiResponse(data=GoodsOut.model_validate(goods).model_dump(mode="json"))
 
 
 @router.get("/goods/{goods_id}")
 async def get_goods(goods_id: uuid.UUID, db: DbSession) -> ApiResponse:
-    goods = await db.get(Goods, goods_id)
-    if not goods:
-        raise HTTPException(status_code=404, detail="商品不存在")
+    goods = await _load_goods_full(db, goods_id)
     return ApiResponse(data=GoodsOut.model_validate(goods).model_dump(mode="json"))
 
 
 @router.patch("/goods/{goods_id}")
 async def update_goods(goods_id: uuid.UUID, body: GoodsUpdate, db: DbSession) -> ApiResponse:
-    goods = await db.get(Goods, goods_id)
-    if not goods:
-        raise HTTPException(status_code=404, detail="商品不存在")
+    goods = await _load_goods_full(db, goods_id)
     # 校验规格维度约束
     updates = body.model_dump(exclude_unset=True)
     if "spec_groups" in updates and updates["spec_groups"]:
@@ -894,9 +1143,14 @@ async def update_goods(goods_id: uuid.UUID, body: GoodsUpdate, db: DbSession) ->
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
     for field, value in updates.items():
+        if field in {"xgj_profile", "xgj_properties", "xgj_publish_shops"}:
+            continue
         setattr(goods, field, value)
+    _apply_goods_xgj_data(goods, body, partial=True)
+    await db.flush()
+    goods = await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
-    await db.refresh(goods)
+    goods = await _load_goods_full(db, goods_id)
 
     # 通知订阅方商品变更
     asyncio.create_task(_notify_goods_change(db, goods))
@@ -937,8 +1191,11 @@ async def upload_goods_logo(
     storage.put_bytes(storage_key, data, file.content_type or "image/png")
     logo_url = storage.public_url(storage_key)
     goods.logo_url = logo_url
+    await db.flush()
+    goods = await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
-    await db.refresh(goods)
+    goods = await _load_goods_full(db, goods_id)
+    asyncio.create_task(_notify_goods_change(db, goods))
     return ApiResponse(data=GoodsOut.model_validate(goods).model_dump(mode="json"))
 
 
@@ -955,6 +1212,8 @@ async def create_goods_spec(goods_id: uuid.UUID, body: GoodsSpecCreate, db: DbSe
         price_cents=body.price_cents,
         stock=body.stock,
         enabled=body.enabled,
+        xgj_sku_text=body.xgj_sku_text,
+        xgj_outer_id=body.xgj_outer_id,
     )
     db.add(spec)
     await db.flush()
@@ -965,6 +1224,8 @@ async def create_goods_spec(goods_id: uuid.UUID, body: GoodsSpecCreate, db: DbSe
             sku_id=binding_in.sku_id,
         )
         db.add(binding)
+    await db.flush()
+    await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
     await db.refresh(spec)
 
@@ -985,6 +1246,8 @@ async def update_goods_spec(
         raise HTTPException(status_code=404, detail="规格不存在")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(spec, field, value)
+    await db.flush()
+    await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
     await db.refresh(spec)
 
@@ -1001,6 +1264,8 @@ async def delete_goods_spec(goods_id: uuid.UUID, spec_id: uuid.UUID, db: DbSessi
     if not spec or spec.goods_id != goods_id:
         raise HTTPException(status_code=404, detail="规格不存在")
     await db.delete(spec)
+    await db.flush()
+    await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
 
     goods = await db.get(Goods, goods_id)
@@ -1037,6 +1302,8 @@ async def set_spec_bindings(
             sku_id=binding_in.sku_id,
         )
         db.add(binding)
+    await db.flush()
+    await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
     await db.refresh(spec)
     return ApiResponse(data=GoodsSpecOut.model_validate(spec).model_dump(mode="json"))
@@ -1085,6 +1352,8 @@ async def set_spec_config(
             price_cents=v.price_cents,
             stock=v.stock,
             enabled=v.enabled,
+            xgj_sku_text=v.xgj_sku_text,
+            xgj_outer_id=v.xgj_outer_id,
         )
         db.add(spec)
         await db.flush()
@@ -1095,19 +1364,13 @@ async def set_spec_config(
                 sku_id=binding_in.sku_id,
             ))
 
+    await db.flush()
+    await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
 
     asyncio.create_task(_notify_goods_change(db, goods))
 
-    # 重新查询并预加载所有关系，避免懒加载在序列化时触发 MissingGreenlet
-    refreshed = await db.execute(
-        select(Goods)
-        .where(Goods.id == goods_id)
-        .options(
-            selectinload(Goods.specs).selectinload(GoodsSpec.sku_bindings)
-        )
-    )
-    goods = refreshed.scalar_one()
+    goods = await _load_goods_full(db, goods_id)
 
     return ApiResponse(data=GoodsOut.model_validate(goods).model_dump(mode="json"))
 

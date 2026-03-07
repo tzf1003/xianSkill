@@ -175,6 +175,67 @@
           <textarea v-model="goodsForm.description" rows="2" placeholder="商品描述（可选）"></textarea>
         </div>
 
+        <div class="form-group" style="grid-column:1/-1">
+          <label class="section-label">闲管家商品配置</label>
+        </div>
+        <div class="xgj-grid" style="grid-column:1/-1">
+          <label class="form-group"><span>item_biz_type *</span><input v-model.number="goodsForm.xgj_profile.item_biz_type" type="number" min="0" /></label>
+          <label class="form-group"><span>sp_biz_type *</span><input v-model.number="goodsForm.xgj_profile.sp_biz_type" type="number" min="0" /></label>
+          <label class="form-group"><span>category_id</span><input v-model.number="goodsForm.xgj_profile.category_id" type="number" min="0" /></label>
+          <label class="form-group"><span>channel_cat_id *</span><input v-model="goodsForm.xgj_profile.channel_cat_id" placeholder="闲管家类目ID" /></label>
+          <label class="form-group"><span>原价(分)</span><input v-model.number="goodsForm.xgj_profile.original_price_cents" type="number" min="0" /></label>
+          <label class="form-group"><span>运费(分)</span><input v-model.number="goodsForm.xgj_profile.express_fee_cents" type="number" min="0" /></label>
+          <label class="form-group"><span>成色</span><input v-model.number="goodsForm.xgj_profile.stuff_status" type="number" /></label>
+          <label class="form-group"><span>flash_sale_type</span><input v-model.number="goodsForm.xgj_profile.flash_sale_type" type="number" min="0" /></label>
+          <label class="form-group" style="grid-column:1/-1"><span>notify_url</span><input v-model="goodsForm.xgj_profile.notify_url" placeholder="商品变更回调地址（可选）" /></label>
+          <label class="checkbox-inline"><input v-model="goodsForm.xgj_profile.is_tax_included" type="checkbox" /> 含税</label>
+        </div>
+
+        <div class="form-group" style="grid-column:1/-1">
+          <label class="section-label">闲管家商品属性</label>
+          <div class="nested-list">
+            <div v-for="(prop, pi) in goodsForm.xgj_properties" :key="pi" class="nested-card nested-grid">
+              <input v-model="prop.property_id" placeholder="属性ID" />
+              <input v-model="prop.property_name" placeholder="属性名" />
+              <input v-model="prop.value_id" placeholder="属性值ID" />
+              <input v-model="prop.value_name" placeholder="属性值名" />
+              <button class="btn btn-danger btn-sm nested-remove" @click="removeXgjProperty(pi)">删除属性</button>
+            </div>
+            <button class="btn btn-secondary btn-sm" @click="addXgjProperty">＋ 添加属性</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="grid-column:1/-1">
+          <label class="section-label">闲管家发布店铺</label>
+          <div class="nested-list">
+            <div v-for="(shop, si) in goodsForm.xgj_publish_shops" :key="si" class="nested-card">
+              <div class="nested-card-head">
+                <b>店铺 {{ si + 1 }}</b>
+                <button class="btn btn-danger btn-sm" @click="removeXgjShop(si)">删除店铺</button>
+              </div>
+              <div class="nested-grid">
+                <input v-model="shop.user_name" placeholder="闲鱼会员名 *" />
+                <input v-model.number="shop.province" type="number" min="0" placeholder="省份ID *" />
+                <input v-model.number="shop.city" type="number" min="0" placeholder="城市ID *" />
+                <input v-model.number="shop.district" type="number" min="0" placeholder="地区ID *" />
+                <input v-model="shop.title" placeholder="商品标题 *" />
+                <input v-model="shop.service_support" placeholder="服务项，如 SDR,VNR" />
+                <input v-model="shop.white_image_url" placeholder="白底图URL（可选）" style="grid-column:1/-1" />
+                <textarea v-model="shop.content" rows="3" placeholder="商品描述 *" style="grid-column:1/-1"></textarea>
+              </div>
+              <div class="shop-images">
+                <div class="section-subtitle">店铺图片</div>
+                <div v-for="(image, ii) in shop.images" :key="ii" class="image-row">
+                  <input v-model="image.image_url" placeholder="图片URL *" />
+                  <button class="btn btn-danger btn-sm" @click="removeXgjShopImage(si, ii)">删除</button>
+                </div>
+                <button class="btn btn-secondary btn-sm" @click="addXgjShopImage(si)">＋ 添加图片</button>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" @click="addXgjShop">＋ 添加店铺</button>
+          </div>
+        </div>
+
         <!-- 单规格模式：直接设置发货时机绑定 -->
         <template v-if="!goodsForm.multi_spec">
           <div class="form-group" style="grid-column:1/-1">
@@ -286,6 +347,7 @@ import {
   createGoodsSpec, updateGoodsSpec, setSpecBindings, setSpecConfig,
   listXgjOrders, listSKUs,
   type Goods, type GoodsSpec, type SKU, type XgjOrder, type SpecGroup,
+  type GoodsXgjProfile, type GoodsXgjProperty, type GoodsXgjPublishShop,
 } from '@/api/client'
 import Modal from '@/components/Modal.vue'
 
@@ -333,6 +395,46 @@ const singleSpecBindings = ref<Record<string, string | null>>({
   after_payment: null, after_receipt: null, after_review: null,
 })
 
+function createDefaultXgjProfile(): GoodsXgjProfile {
+  return {
+    item_biz_type: 2,
+    sp_biz_type: 22,
+    category_id: null,
+    channel_cat_id: '',
+    original_price_cents: 0,
+    express_fee_cents: 0,
+    stuff_status: 0,
+    notify_url: null,
+    flash_sale_type: null,
+    is_tax_included: false,
+  }
+}
+
+function createEmptyXgjProperty(): GoodsXgjProperty {
+  return {
+    property_id: '',
+    property_name: '',
+    value_id: '',
+    value_name: '',
+    sort_order: 0,
+  }
+}
+
+function createEmptyXgjShop(): GoodsXgjPublishShop {
+  return {
+    user_name: '',
+    province: 0,
+    city: 0,
+    district: 0,
+    title: '',
+    content: '',
+    white_image_url: null,
+    service_support: null,
+    sort_order: 0,
+    images: [{ image_url: '', sort_order: 0 }],
+  }
+}
+
 const defaultGoodsForm = () => ({
   goods_type: 1, goods_name: '',
   logo_url: null as string | null,
@@ -340,8 +442,38 @@ const defaultGoodsForm = () => ({
   multi_spec: false,
   xgj_goods_id: null as string | null,
   description: null as string | null,
+  xgj_profile: createDefaultXgjProfile(),
+  xgj_properties: [] as GoodsXgjProperty[],
+  xgj_publish_shops: [createEmptyXgjShop()] as GoodsXgjPublishShop[],
 })
 const goodsForm = ref(defaultGoodsForm())
+
+function addXgjProperty() {
+  goodsForm.value.xgj_properties.push(createEmptyXgjProperty())
+}
+
+function removeXgjProperty(index: number) {
+  goodsForm.value.xgj_properties.splice(index, 1)
+}
+
+function addXgjShop() {
+  goodsForm.value.xgj_publish_shops.push(createEmptyXgjShop())
+}
+
+function removeXgjShop(index: number) {
+  if (goodsForm.value.xgj_publish_shops.length === 1) return
+  goodsForm.value.xgj_publish_shops.splice(index, 1)
+}
+
+function addXgjShopImage(shopIndex: number) {
+  goodsForm.value.xgj_publish_shops[shopIndex].images.push({ image_url: '', sort_order: 0 })
+}
+
+function removeXgjShopImage(shopIndex: number, imageIndex: number) {
+  const images = goodsForm.value.xgj_publish_shops[shopIndex].images
+  if (images.length === 1) return
+  images.splice(imageIndex, 1)
+}
 
 function onLogoSelected(e: Event) {
   const input = e.target as HTMLInputElement
@@ -370,6 +502,20 @@ async function openEdit(g: Goods) {
     multi_spec: g.multi_spec,
     xgj_goods_id: g.xgj_goods_id,
     description: g.description,
+    xgj_profile: g.xgj_profile ?? createDefaultXgjProfile(),
+    xgj_properties: (g.xgj_properties ?? []).map((item, index) => ({ ...item, sort_order: item.sort_order ?? index })),
+    xgj_publish_shops: (g.xgj_publish_shops?.length
+      ? g.xgj_publish_shops
+      : [createEmptyXgjShop()]).map((shop, shopIndex) => ({
+        ...shop,
+        sort_order: shop.sort_order ?? shopIndex,
+        white_image_url: shop.white_image_url ?? null,
+        service_support: shop.service_support ?? null,
+        images: (shop.images?.length ? shop.images : [{ image_url: '', sort_order: 0 }]).map((image, imageIndex) => ({
+          ...image,
+          sort_order: image.sort_order ?? imageIndex,
+        })),
+      })),
   }
   logoFile.value = null; logoPreview.value = null
   // 单规格：加载默认规格的绑定
@@ -392,6 +538,16 @@ async function openEdit(g: Goods) {
 async function handleSaveGoods() {
   const f = goodsForm.value
   if (!f.goods_name.trim()) { goodsErr.value = '商品名称不能为空'; return }
+  if (!f.xgj_profile.channel_cat_id.trim()) { goodsErr.value = '请填写 channel_cat_id'; return }
+  if (!f.xgj_publish_shops.length) { goodsErr.value = '请至少配置一个闲管家发布店铺'; return }
+  if (f.xgj_publish_shops.some(shop => !shop.user_name.trim() || !shop.title.trim() || !shop.content.trim())) {
+    goodsErr.value = '请完整填写发布店铺的会员名、标题和描述'
+    return
+  }
+  if (f.xgj_publish_shops.some(shop => shop.images.some(image => !image.image_url.trim()))) {
+    goodsErr.value = '请完整填写发布店铺图片 URL'
+    return
+  }
   goodsSaving.value = true; goodsErr.value = ''
   try {
     let savedGoods: Goods
@@ -403,6 +559,19 @@ async function handleSaveGoods() {
         multi_spec: f.multi_spec,
         xgj_goods_id: f.xgj_goods_id || undefined,
         description: f.description,
+        xgj_profile: {
+          ...f.xgj_profile,
+          notify_url: f.xgj_profile.notify_url || null,
+          flash_sale_type: f.xgj_profile.flash_sale_type || null,
+        },
+        xgj_properties: f.xgj_properties.map((item, index) => ({ ...item, sort_order: index })),
+        xgj_publish_shops: f.xgj_publish_shops.map((shop, shopIndex) => ({
+          ...shop,
+          white_image_url: shop.white_image_url || null,
+          service_support: shop.service_support || null,
+          sort_order: shopIndex,
+          images: shop.images.map((image, imageIndex) => ({ ...image, sort_order: imageIndex })),
+        })),
       })
     } else {
       savedGoods = await createGoods({
@@ -411,6 +580,19 @@ async function handleSaveGoods() {
         price_cents: f.price_cents, stock: f.stock, status: f.status,
         multi_spec: f.multi_spec,
         description: f.description,
+        xgj_profile: {
+          ...f.xgj_profile,
+          notify_url: f.xgj_profile.notify_url || null,
+          flash_sale_type: f.xgj_profile.flash_sale_type || null,
+        },
+        xgj_properties: f.xgj_properties.map((item, index) => ({ ...item, sort_order: index })),
+        xgj_publish_shops: f.xgj_publish_shops.map((shop, shopIndex) => ({
+          ...shop,
+          white_image_url: shop.white_image_url || null,
+          service_support: shop.service_support || null,
+          sort_order: shopIndex,
+          images: shop.images.map((image, imageIndex) => ({ ...image, sort_order: imageIndex })),
+        })),
       })
     }
 
@@ -751,6 +933,21 @@ onMounted(load)
 .batch-label { font-size: .8rem; color: var(--text-muted); font-weight: 600; }
 .spec-field { display: flex; align-items: center; gap: 4px; font-size: .8rem; color: var(--text-muted); }
 .spec-field input { width: 80px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: .82rem; }
+
+.xgj-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.checkbox-inline { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--text); }
+.nested-list { display: flex; flex-direction: column; gap: 12px; }
+.nested-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--bg); }
+.nested-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.nested-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.nested-remove { grid-column: 1 / -1; justify-self: end; }
+.shop-images { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.section-subtitle { font-size: .8rem; color: var(--text-muted); font-weight: 600; }
+.image-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+
+@media (max-width: 900px) {
+  .xgj-grid, .nested-grid { grid-template-columns: 1fr; }
+}
 .binding-item { display: flex; flex-direction: column; gap: 4px; }
 .binding-label { font-size: .75rem; color: var(--text-muted); font-weight: 600; }
 .binding-select {

@@ -369,8 +369,118 @@ class Goods(Base, TimestampMixin):
     template: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="充值模板(直充商品)")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    xgj_profile: Mapped["GoodsXgjProfile | None"] = relationship(
+        "GoodsXgjProfile", back_populates="goods", lazy="selectin", uselist=False,
+        cascade="all, delete-orphan"
+    )
+    xgj_properties: Mapped[list["GoodsXgjProperty"]] = relationship(
+        "GoodsXgjProperty", back_populates="goods", lazy="selectin", cascade="all, delete-orphan"
+    )
+    xgj_publish_shops: Mapped[list["GoodsXgjPublishShop"]] = relationship(
+        "GoodsXgjPublishShop", back_populates="goods", lazy="selectin", cascade="all, delete-orphan"
+    )
     specs: Mapped[list["GoodsSpec"]] = relationship("GoodsSpec", back_populates="goods", lazy="selectin", cascade="all, delete-orphan")
     subscriptions: Mapped[list["GoodsSubscription"]] = relationship("GoodsSubscription", back_populates="goods", lazy="selectin", cascade="all, delete-orphan")
+
+
+class GoodsXgjProfile(Base, TimestampMixin):
+    """闲管家 ERP 商品通用字段（一对一）。"""
+
+    __tablename__ = "goods_xgj_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goods_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    item_biz_type: Mapped[int] = mapped_column(Integer, nullable=False, comment="闲管家商品类型")
+    sp_biz_type: Mapped[int] = mapped_column(Integer, nullable=False, comment="闲管家行业类型")
+    category_id: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="闲鱼分类ID")
+    channel_cat_id: Mapped[str] = mapped_column(String(100), nullable=False, comment="闲管家类目ID")
+    original_price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="商品原价(分)")
+    express_fee_cents: Mapped[int] = mapped_column(Integer, default=0, comment="运费(分)")
+    stuff_status: Mapped[int] = mapped_column(Integer, default=0, comment="商品成色")
+    notify_url: Mapped[str | None] = mapped_column(String(2000), nullable=True, comment="商品变更回调地址")
+    flash_sale_type: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="闲鱼特卖类型")
+    is_tax_included: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否包含税费")
+    product_status: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="闲管家商品状态")
+    publish_status: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="闲鱼上架状态")
+
+    goods: Mapped[Goods] = relationship("Goods", back_populates="xgj_profile")
+
+    __table_args__ = (Index("ix_goods_xgj_profiles_goods_id", "goods_id"),)
+
+
+class GoodsXgjProperty(Base, TimestampMixin):
+    """闲管家商品属性（channel_pv）。"""
+
+    __tablename__ = "goods_xgj_properties"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goods_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods.id", ondelete="CASCADE"), nullable=False
+    )
+    property_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    property_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    value_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    value_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    goods: Mapped[Goods] = relationship("Goods", back_populates="xgj_properties")
+
+    __table_args__ = (
+        Index("ix_goods_xgj_properties_goods_id", "goods_id"),
+        Index("ix_goods_xgj_properties_sort_order", "goods_id", "sort_order"),
+    )
+
+
+class GoodsXgjPublishShop(Base, TimestampMixin):
+    """闲管家发布店铺配置。"""
+
+    __tablename__ = "goods_xgj_publish_shops"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goods_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods.id", ondelete="CASCADE"), nullable=False
+    )
+    user_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="闲鱼会员名")
+    province: Mapped[int] = mapped_column(Integer, nullable=False)
+    city: Mapped[int] = mapped_column(Integer, nullable=False)
+    district: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(60), nullable=False, comment="商品标题")
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="商品描述")
+    white_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="白底图URL")
+    service_support: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="商品服务项")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    goods: Mapped[Goods] = relationship("Goods", back_populates="xgj_publish_shops")
+    images: Mapped[list["GoodsXgjPublishShopImage"]] = relationship(
+        "GoodsXgjPublishShopImage", back_populates="shop", lazy="selectin", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_goods_xgj_publish_shops_goods_id", "goods_id"),
+        Index("ix_goods_xgj_publish_shops_sort_order", "goods_id", "sort_order"),
+    )
+
+
+class GoodsXgjPublishShopImage(Base, TimestampMixin):
+    """发布店铺图片列表。"""
+
+    __tablename__ = "goods_xgj_publish_shop_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    shop_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("goods_xgj_publish_shops.id", ondelete="CASCADE"), nullable=False
+    )
+    image_url: Mapped[str] = mapped_column(String(500), nullable=False, comment="图片URL")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    shop: Mapped[GoodsXgjPublishShop] = relationship("GoodsXgjPublishShop", back_populates="images")
+
+    __table_args__ = (
+        Index("ix_goods_xgj_publish_shop_images_shop_id", "shop_id"),
+        Index("ix_goods_xgj_publish_shop_images_sort_order", "shop_id", "sort_order"),
+    )
 
 
 # ── GoodsSpec（商品规格）──────────────────────────────────────────────
@@ -387,6 +497,8 @@ class GoodsSpec(Base, TimestampMixin):
     price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="规格价格(分)")
     stock: Mapped[int] = mapped_column(Integer, default=0, comment="规格库存")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    xgj_sku_text: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="闲管家SKU规格文本")
+    xgj_outer_id: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="闲管家SKU外部编码")
 
     goods: Mapped[Goods] = relationship("Goods", back_populates="specs")
     sku_bindings: Mapped[list["SpecSkuBinding"]] = relationship(
