@@ -16,6 +16,7 @@ export interface SKU {
   id: string; skill_id: string; name: string
   price_cents: number; delivery_mode: string; total_uses: number
   enabled: boolean; created_at: string; project_id: string | null
+  delivery_content_template: string | null
 }
 
 export interface Order {
@@ -125,7 +126,7 @@ export const listSKUs = (skillId?: string, limit = 50, offset = 0, projectId?: s
   return request<PageResult<SKU>>(`${BASE}/skus?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
 }
 
-export const createSKU = (body: { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null }) =>
+export const createSKU = (body: { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null; delivery_content_template?: string | null }) =>
   request<SKU>(`${BASE}/skus`, json('POST', body))
 
 export const updateSKU = (id: string, body: Partial<SKU>) =>

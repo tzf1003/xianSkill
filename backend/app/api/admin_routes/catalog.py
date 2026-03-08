@@ -181,6 +181,7 @@ async def create_sku(body: SKUCreate, db: DbSession) -> ApiResponse:
         price_cents=body.price_cents,
         delivery_mode=DeliveryMode(body.delivery_mode),
         total_uses=body.total_uses,
+        delivery_content_template=body.delivery_content_template,
         human_sla_hours=body.human_sla_hours,
         human_price_cents=body.human_price_cents,
         project_id=body.project_id,

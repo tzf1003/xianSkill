@@ -107,6 +107,7 @@ class SKUCreate(BaseModel):
     price_cents: int = 0
     delivery_mode: str = Field("auto", pattern=r"^(auto|human)$")
     total_uses: int = Field(1, ge=1)
+    delivery_content_template: str | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
     project_id: uuid.UUID | None = None
@@ -120,6 +121,7 @@ class SKUOut(BaseModel):
     delivery_mode: str
     total_uses: int
     enabled: bool
+    delivery_content_template: str | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
     project_id: uuid.UUID | None = None
@@ -232,6 +234,7 @@ class SKUUpdate(BaseModel):
     delivery_mode: str | None = None
     total_uses: int | None = None
     enabled: bool | None = None
+    delivery_content_template: str | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
     project_id: uuid.UUID | None = None

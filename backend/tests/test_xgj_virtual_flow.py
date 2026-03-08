@@ -115,7 +115,13 @@ async def test_xgj_virtual_purchase_order_creates_local_order_and_token(client: 
 
     sku_resp = await client.post(
         "/v1/admin/skus",
-        json={"skill_id": skill_id, "name": "卡密直发SKU", "delivery_mode": "auto", "total_uses": 2},
+        json={
+            "skill_id": skill_id,
+            "name": "卡密直发SKU",
+            "delivery_mode": "auto",
+            "total_uses": 2,
+            "delivery_content_template": "您的订单编号为：{$订单编号}，您的卡密信息为：{$卡密信息}\n请在此处点击链接，按照提示操作，即可使用：{$卡密链接}",
+        },
         headers=headers,
     )
     assert sku_resp.status_code == 200
@@ -160,7 +166,7 @@ async def test_xgj_virtual_purchase_order_creates_local_order_and_token(client: 
     data = payload["data"]
     assert data["order_status"] == 20
     assert data["goods_no"] == goods.goods_no
-    assert data["card_items"][0]["card_pwd"].startswith("https://frontend.example.com/s/")
+    assert body["order_no"] in data["card_items"][0]["card_pwd"]
 
     detail_resp = await _signed_post(
         client,
@@ -182,7 +188,16 @@ async def test_xgj_virtual_purchase_order_creates_local_order_and_token(client: 
     xgj_orders = (await db_session.execute(select(XgjOrder))).scalars().all()
     assert len(orders) == 1
     assert len(xgj_orders) == 1
-    assert xgj_orders[0].delivery_info["token_url"] == data["card_items"][0]["card_pwd"]
+    token_url = xgj_orders[0].delivery_info["token_url"]
+    token_value = xgj_orders[0].delivery_info["token"]
+    expected_content = (
+        f"您的订单编号为：{body['order_no']}，您的卡密信息为：{token_value}\n"
+        f"请在此处点击链接，按照提示操作，即可使用：{token_url}"
+    )
+    assert "card_no" not in data["card_items"][0]
+    assert data["card_items"][0]["card_pwd"] == expected_content
+    assert detail_data["card_items"][0]["card_pwd"] == expected_content
+    assert xgj_orders[0].delivery_info["delivery_content"] == expected_content
 
 
 @pytest.mark.asyncio
@@ -241,6 +256,68 @@ async def test_xgj_refund_notify_revokes_local_token(client: AsyncClient, db_ses
 
     token = (await db_session.execute(select(Token))).scalar_one()
     assert token.status == TokenStatus.revoked
+
+
+@pytest.mark.asyncio
+async def test_xgj_ticket_order_uses_sku_delivery_template(client: AsyncClient, db_session):
+    headers = await _admin_headers(client)
+
+    skill_resp = await client.post("/v1/admin/skills", json={"name": "券码模板技能", "type": "prompt"}, headers=headers)
+    skill_id = skill_resp.json()["data"]["id"]
+    sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "券码自动发货SKU",
+            "delivery_mode": "auto",
+            "total_uses": 1,
+            "delivery_content_template": "订单：{$订单编号}；卡密：{$卡密信息}；链接：{$卡密链接}",
+        },
+        headers=headers,
+    )
+    sku_id = sku_resp.json()["data"]["id"]
+
+    goods = Goods(
+        goods_no="LOCAL-G-004",
+        goods_type=3,
+        goods_name="券码商品",
+        price_cents=1299,
+        stock=2,
+        status=1,
+        multi_spec=False,
+    )
+    db_session.add(goods)
+    await db_session.commit()
+
+    await client.post(
+        f"/v1/admin/goods/{goods.id}/specs",
+        json={
+            "spec_name": "默认",
+            "price_cents": 1299,
+            "stock": 2,
+            "sku_bindings": [{"timing": "after_payment", "sku_id": sku_id}],
+        },
+        headers=headers,
+    )
+
+    body = {
+        "order_no": "XGJ-TICKET-001",
+        "goods_no": goods.goods_no,
+        "buy_quantity": 1,
+        "notify_url": "https://example.com/callback/order",
+        "biz_order_no": "BIZ-TICKET-001",
+    }
+    resp = await _signed_post(client, "/xgj/open/goofish/order/ticket/create", body)
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["code"] == 0
+
+    data = payload["data"]
+    xgj_order = (await db_session.execute(select(XgjOrder).where(XgjOrder.order_no == body["order_no"]))).scalar_one()
+    token_url = xgj_order.delivery_info["token_url"]
+    expected_content = f"订单：{body['order_no']}；卡密：{data['ticket_items'][0]['code_no']}；链接：{token_url}"
+    assert data["ticket_items"][0]["code_pwd"] == expected_content
+    assert xgj_order.delivery_info["delivery_content"] == expected_content
 
 
 @pytest.mark.asyncio
@@ -368,4 +445,4 @@ async def test_xgj_virtual_purchase_order_can_use_sku_goods_no(client: AsyncClie
     assert payload["code"] == 0
     assert payload["data"]["goods_no"] == goods_no
     assert payload["data"]["goods_name"] == "老照片修复-自动"
-    assert payload["data"]["card_items"][0]["card_pwd"].startswith("https://frontend.example.com/s/")
+    assert "https://frontend.example.com/s/" in payload["data"]["card_items"][0]["card_pwd"]

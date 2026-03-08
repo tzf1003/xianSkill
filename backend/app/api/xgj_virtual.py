@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/xgj/open", tags=["xgj-virtual"])
 _SKU_GOODS_PREFIX = "SKU-"
+_DEFAULT_DELIVERY_CONTENT_TEMPLATE = (
+    "您的订单编号为：{$订单编号}，您的卡密信息为：{$卡密信息}\n"
+    "请在此处点击链接，按照提示操作，即可使用：{$卡密链接}"
+)
 
 # ── 工具函数 ──────────────────────────────────────────────────────────
 
@@ -100,17 +104,41 @@ def _doc_order_status(status: int) -> int:
     return 10
 
 
-def _build_card_items(token_value: str, token_url: str) -> list[dict[str, Any]]:
-    return [{"card_no": token_value, "card_pwd": token_url}]
+def _render_delivery_content(
+    *,
+    template: str | None,
+    order_no: str,
+    goods_name: str,
+    token_value: str,
+    token_url: str,
+    local_order: Order,
+    sku: SKU,
+) -> str:
+    rendered = (template or "").strip() or _DEFAULT_DELIVERY_CONTENT_TEMPLATE
+    replacements = {
+        "{$订单编号}": order_no,
+        "{$卡密信息}": token_value,
+        "{$卡密链接}": token_url,
+        "{$商品名称}": goods_name,
+        "{$SKU名称}": sku.name,
+        "{$本地订单编号}": str(local_order.id),
+    }
+    for placeholder, value in replacements.items():
+        rendered = rendered.replace(placeholder, value)
+    return rendered
 
 
-def _build_ticket_items(token_value: str, token_url: str, goods_name: str) -> list[dict[str, Any]]:
+def _build_card_items(token_value: str, delivery_content: str) -> list[dict[str, Any]]:
+    return [{"card_pwd": delivery_content}]
+
+
+def _build_ticket_items(token_value: str, delivery_content: str, goods_name: str) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     valid_end = now + timedelta(days=365)
     return [
         {
             "code_no": token_value,
-            "code_pwd": token_url,
+            "code_pwd": delivery_content,
             "code_name": goods_name,
             "code_type": 1,
             "valid_start_time": _to_epoch(now),
@@ -122,21 +150,39 @@ def _build_ticket_items(token_value: str, token_url: str, goods_name: str) -> li
     ]
 
 
-def _build_delivery_info(*, goods_type: int, goods_name: str, token: Token, local_order: Order) -> dict[str, Any]:
+def _build_delivery_info(
+    *,
+    order_no: str,
+    goods_type: int,
+    goods_name: str,
+    token: Token,
+    local_order: Order,
+    sku: SKU,
+) -> dict[str, Any]:
     token_url = build_token_url(token.token)
+    delivery_content = _render_delivery_content(
+        template=sku.delivery_content_template,
+        order_no=order_no,
+        goods_name=goods_name,
+        token_value=token.token,
+        token_url=token_url,
+        local_order=local_order,
+        sku=sku,
+    )
     delivery_info: dict[str, Any] = {
         "token": token.token,
         "token_url": token_url,
+        "delivery_content": delivery_content,
         "local_order_id": str(local_order.id),
         "local_token_id": str(token.id),
         "goods_name": goods_name,
     }
     if goods_type == 2:
-        delivery_info["card_items"] = _build_card_items(token.token, token_url)
+        delivery_info["card_items"] = _build_card_items(token.token, delivery_content)
     elif goods_type == 3:
-        delivery_info["ticket_items"] = _build_ticket_items(token.token, token_url, goods_name)
+        delivery_info["ticket_items"] = _build_ticket_items(token.token, delivery_content, goods_name)
     else:
-        delivery_info["remark"] = f"交付链接: {token_url}"
+        delivery_info["remark"] = delivery_content
     return delivery_info
 
 
@@ -583,10 +629,12 @@ async def _create_order(
         await db.flush()
 
         delivery_info = _build_delivery_info(
+            order_no=order_no,
             goods_type=2,
             goods_name=sku_goods.name,
             token=token,
             local_order=local_order,
+            sku=sku_goods,
         )
         delivery_info["virtual_source"] = "sku"
         delivery_info["local_sku_id"] = str(sku_goods.id)
@@ -669,10 +717,12 @@ async def _create_order(
     await db.flush()
 
     delivery_info = _build_delivery_info(
+        order_no=order_no,
         goods_type=goods.goods_type,
         goods_name=goods.goods_name,
         token=token,
         local_order=local_order,
+        sku=sku,
     )
 
     xgj_order = XgjOrder(

@@ -71,6 +71,15 @@
             <option value="human">human（人工）</option>
           </select>
         </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>发货内容模板</label>
+          <textarea
+            v-model="form.delivery_content_template"
+            rows="5"
+            placeholder="您的订单编号为：{$订单编号}，您的卡密信息为：{$卡密信息}\n请在此处点击链接，按照提示操作，即可使用：{$卡密链接}"
+          />
+          <small class="field-hint">支持占位符：{$订单编号}、{$卡密信息}、{$卡密链接}、{$商品名称}、{$SKU名称}、{$本地订单编号}</small>
+        </div>
       </div>
       <p v-if="err" class="error-text">{{ err }}</p>
       <template #footer>
@@ -99,7 +108,7 @@ const editing = ref<SKU | null>(null)
 const saving = ref(false)
 const err = ref('')
 
-const defaultForm = () => ({ name: '', skill_id: '', project_id: null as string | null, price_cents: 0, total_uses: 1, delivery_mode: 'auto' })
+const defaultForm = () => ({ name: '', skill_id: '', project_id: null as string | null, price_cents: 0, total_uses: 1, delivery_mode: 'auto', delivery_content_template: '' })
 const form = ref(defaultForm())
 
 async function load() {
@@ -110,7 +119,15 @@ async function load() {
 function openCreate() { editing.value = null; form.value = defaultForm(); err.value = ''; showModal.value = true }
 function openEdit(s: SKU) {
   editing.value = s
-  form.value = { name: s.name, skill_id: s.skill_id, project_id: s.project_id ?? null, price_cents: s.price_cents, total_uses: s.total_uses, delivery_mode: s.delivery_mode }
+  form.value = {
+    name: s.name,
+    skill_id: s.skill_id,
+    project_id: s.project_id ?? null,
+    price_cents: s.price_cents,
+    total_uses: s.total_uses,
+    delivery_mode: s.delivery_mode,
+    delivery_content_template: s.delivery_content_template ?? '',
+  }
   err.value = ''; showModal.value = true
 }
 
@@ -119,7 +136,7 @@ async function handleSave() {
   saving.value = true; err.value = ''
   try {
     if (editing.value) await updateSKU(editing.value.id, form.value)
-    else await createSKU(form.value as { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null })
+    else await createSKU(form.value as { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null; delivery_content_template?: string | null })
     showModal.value = false; await load()
   } catch (e: unknown) { err.value = e instanceof Error ? e.message : '操作失败' }
   finally { saving.value = false }
@@ -136,4 +153,5 @@ onMounted(load)
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .total-hint { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
 .tiny { font-size: .75rem; font-family: monospace; background: var(--bg); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); }
+.field-hint { display: block; margin-top: 6px; color: var(--text-muted); font-size: .82rem; line-height: 1.5; }
 </style>

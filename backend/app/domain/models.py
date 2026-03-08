@@ -186,6 +186,7 @@ class SKU(Base, TimestampMixin):
     )
     total_uses: Mapped[int] = mapped_column(Integer, default=1, comment="该 SKU 允许使用的总次数")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    delivery_content_template: Mapped[str | None] = mapped_column(Text, nullable=True, comment="卡密/券码发货内容模板")
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True,
         comment="该 SKU 属于哪个项目（决定运行时加载哪个 Project 的选项配置）"
