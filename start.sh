@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  ArtForge — Start Script (Linux / macOS)
+#  小神skills — Start Script (Linux / macOS)
 # ============================================================
 set -euo pipefail
 
@@ -30,7 +30,7 @@ source "$VENV_DIR/bin/activate"
 
 echo ""
 echo "============================================================"
-echo " ArtForge — Start Script (Linux / macOS)"
+echo " 小神skills — Start Script (Linux / macOS)"
 echo "============================================================"
 echo ""
 

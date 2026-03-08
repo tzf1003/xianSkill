@@ -18,13 +18,13 @@
           </defs>
         </svg>
         <div>
-          <div class="brand-name">ArtForge</div>
-          <div class="brand-sub">管理控制台</div>
+          <div class="brand-name">小神skills</div>
+          <div class="brand-sub">统一管理后台</div>
         </div>
       </div>
 
       <h1 class="title">欢迎回来</h1>
-      <p class="subtitle">请输入管理员账号密码登录</p>
+      <p class="subtitle">登录小神skills，统一管理技能、商品、店铺与交付流程</p>
 
       <form class="form" @submit.prevent="handleLogin">
         <div class="field">

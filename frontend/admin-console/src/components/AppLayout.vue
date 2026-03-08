@@ -10,8 +10,8 @@
           </svg>
         </div>
         <div class="logo-text">
-          <span class="logo-name">ArtForge</span>
-          <span class="logo-sub">管理控制台</span>
+          <span class="logo-name">小神skills</span>
+          <span class="logo-sub">统一管理后台</span>
         </div>
       </div>
 

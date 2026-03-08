@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # --- App ---
-    APP_NAME: str = "skill-platform"
+    APP_NAME: str = "小神skills"
     DEBUG: bool = False
 
     # --- Database (Postgres) ---

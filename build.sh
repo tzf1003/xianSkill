@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  ArtForge — Build Script (Linux / macOS)
+#  小神skills — Build Script (Linux / macOS)
 # ============================================================
 set -euo pipefail
 
@@ -14,7 +14,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
 echo "============================================================"
-echo " ArtForge — Build Script (Linux / macOS)"
+echo " 小神skills — Build Script (Linux / macOS)"
 echo "============================================================"
 
 # ── 1. Python 虚拟环境 ───────────────────────────────────────────────

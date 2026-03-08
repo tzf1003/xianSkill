@@ -1,7 +1,7 @@
 [project]
-name = "skill-platform-backend"
+name = "xiaoshenskills-backend"
 version = "0.1.0"
-description = "Skill 商品化与自动交付平台 - Backend"
+description = "小神skills AI 能力商品化与自动交付平台 - Backend"
 requires-python = ">=3.11"
 
 dependencies = [

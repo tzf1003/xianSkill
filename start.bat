@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 echo ============================================================
-echo  xianSkill -- Start Script (Windows)
+echo  小神skills -- Start Script (Windows)
 echo ============================================================
 
 if not exist "backend\.venv\Scripts\activate.bat" (
@@ -30,18 +30,18 @@ if errorlevel 1 (
 popd
 
 echo [1/4] FastAPI backend      http://localhost:8000
-start "xianSkill - FastAPI" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+start "小神skills - FastAPI" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
 echo [2/4] RQ Worker x3
-start "xianSkill - RQ Worker 1" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
-start "xianSkill - RQ Worker 2" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
-start "xianSkill - RQ Worker 3" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
+start "小神skills - RQ Worker 1" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
+start "小神skills - RQ Worker 2" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
+start "小神skills - RQ Worker 3" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && python worker.py"
 
 echo [3/4] user-portal          http://localhost:5173
-start "xianSkill - user-portal" cmd /k "cd /d %~dp0frontend\user-portal && npm run dev"
+start "小神skills - user-portal" cmd /k "cd /d %~dp0frontend\user-portal && npm run dev"
 
 echo [4/4] admin-console        http://localhost:5174
-start "xianSkill - admin-console" cmd /k "cd /d %~dp0frontend\admin-console && npm run dev"
+start "小神skills - admin-console" cmd /k "cd /d %~dp0frontend\admin-console && npm run dev"
 
 echo.
 echo ============================================================

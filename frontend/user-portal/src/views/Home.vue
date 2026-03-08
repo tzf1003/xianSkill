@@ -17,11 +17,11 @@
               <path d="M16 7L19.5 13.5H23L17.5 18.5L19.5 24L16 20.5L12.5 24L14.5 18.5L9 13.5H12.5L16 7Z" fill="white" opacity="0.95"/>
             </svg>
           </div>
-          <span class="logo-text">ArtForge</span>
+          <span class="logo-text">小神skills</span>
         </div>
         <div class="nav-links">
           <a href="#features" class="nav-link">功能</a>
-          <a href="#gallery" class="nav-link">画廊</a>
+          <a href="#gallery" class="nav-link">场景</a>
           <a href="#projects" class="nav-link">项目</a>
         </div>
         <div class="nav-actions">
@@ -38,7 +38,7 @@
             </svg>
           </button>
           <a href="#start" class="nav-cta-btn">
-            立即开始
+            立即体验
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
               <path d="M5 12h14M12 5l7 7-7 7"/>
             </svg>
@@ -59,14 +59,14 @@
         <div class="hero-left">
           <div class="hero-eyebrow">
             <div class="eyebrow-dot" aria-hidden="true"/>
-            <span>AI 驱动生成式艺术平台</span>
+            <span>AI 能力商品化与自动交付平台</span>
           </div>
           <h1 class="hero-title">
-            将创意<br/>
-            <span class="hero-gradient">转化为艺术</span>
+            让 AI 能力<br/>
+            <span class="hero-gradient">变成可售卖服务</span>
           </h1>
           <p class="hero-desc">
-            上传图片，AI 在秒级内完成修复、风格迁移与创意重绘。让每一张普通照片，都成为独一无二的艺术作品。
+            面向技能交付、虚拟货源和定制服务，小神skills 支持 Token 访问、自动执行与人工协助，帮助你把能力快速上架、交付和复用。
           </p>
           <div class="input-block" id="start-input">
             <label for="token-main" class="sr-only">输入 Token</label>
@@ -78,31 +78,31 @@
                 <input id="token-main" v-model="tokenInput" type="text" placeholder="粘贴您的专属 Token" @keyup.enter="go" autocomplete="off" spellcheck="false"/>
               </div>
               <button class="btn-primary" :disabled="!tokenInput.trim()" @click="go">
-                开始创作
+                开始使用
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
               </button>
             </div>
-            <p class="input-hint">已有服务链接？直接粘贴 Token 即可访问</p>
+            <p class="input-hint">已有专属链接？直接粘贴 Token 即可进入对应服务</p>
           </div>
           <div class="stats-row">
-            <div class="stat-item"><span class="stat-num">10K+</span><span class="stat-label">艺术作品</span></div>
+            <div class="stat-item"><span class="stat-num">10K+</span><span class="stat-label">累计交付</span></div>
             <div class="stat-divider" aria-hidden="true"/>
-            <div class="stat-item"><span class="stat-num">&lt;5s</span><span class="stat-label">处理时间</span></div>
+            <div class="stat-item"><span class="stat-num">&lt;5min</span><span class="stat-label">响应交付</span></div>
             <div class="stat-divider" aria-hidden="true"/>
-            <div class="stat-item"><span class="stat-num">6+</span><span class="stat-label">艺术风格</span></div>
+            <div class="stat-item"><span class="stat-num">6+</span><span class="stat-label">能力场景</span></div>
           </div>
         </div>
         <div class="hero-mosaic" aria-hidden="true">
           <div class="mosaic-grid">
-            <div class="mosaic-card mc-tall mc1"><div class="mosaic-label">印象派</div></div>
-            <div class="mosaic-card mc2"><div class="mosaic-label">赛博朋克</div></div>
-            <div class="mosaic-card mc3"><div class="mosaic-label">水墨写意</div></div>
-            <div class="mosaic-card mc-wide mc4"><div class="mosaic-label">抽象几何</div></div>
-            <div class="mosaic-card mc5"><div class="mosaic-label">油画质感</div></div>
+            <div class="mosaic-card mc-tall mc1"><div class="mosaic-label">图像修复</div></div>
+            <div class="mosaic-card mc2"><div class="mosaic-label">虚拟货源</div></div>
+            <div class="mosaic-card mc3"><div class="mosaic-label">内容生成</div></div>
+            <div class="mosaic-card mc-wide mc4"><div class="mosaic-label">自动交付</div></div>
+            <div class="mosaic-card mc5"><div class="mosaic-label">人工协助</div></div>
           </div>
           <div class="mosaic-badge">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-            <span>高清输出</span>
+            <span>统一交付</span>
           </div>
         </div>
       </div>
@@ -113,8 +113,8 @@
     <section id="features" class="features-section" aria-labelledby="features-title">
       <div class="section-head">
         <div class="section-tag">核心功能</div>
-        <h2 class="section-title" id="features-title">三步完成创作</h2>
-        <p class="section-sub">简单快捷的 AI 艺术工作流，无需专业技能</p>
+        <h2 class="section-title" id="features-title">三步完成交付</h2>
+        <p class="section-sub">统一接入 AI 能力、商品配置与交付流程，无需复杂系统拼装</p>
       </div>
       <div class="bento-grid">
         <article class="bento-card b-lg">
@@ -125,8 +125,8 @@
               <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
           </div>
-          <h3>上传原图</h3>
-          <p>支持 JPG、PNG、WEBP，最大 20MB。拖拽或点击上传，即时预览确认。</p>
+          <h3>选择服务</h3>
+          <p>按项目、Skill 或商品能力快速定位服务入口，支持标准化接入与独立配置。</p>
           <div class="bento-deco" aria-hidden="true"><div class="deco-ring r1"/><div class="deco-ring r2"/></div>
         </article>
         <article class="bento-card b-sm">
@@ -137,8 +137,8 @@
               <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
             </svg>
           </div>
-          <h3>AI 处理</h3>
-          <p>模型在秒级内完成智能分析与艺术化处理，全自动无需等待。</p>
+          <h3>发起执行</h3>
+          <p>通过 Token、订单或后台触发交付任务，自动调度 AI 执行链路与回调流程。</p>
         </article>
         <article class="bento-card b-sm">
           <div class="bento-num" aria-hidden="true">03</div>
@@ -148,8 +148,8 @@
               <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </div>
-          <h3>下载成品</h3>
-          <p>高清输出，即时预览并一键下载，专属艺术作品永久保存。</p>
+          <h3>获取结果</h3>
+          <p>支持自动返回、人工协助和历史追踪，让结果交付、资产留存与审计同步完成。</p>
         </article>
         <article class="bento-card b-wide glass-card">
           <div class="bento-icon-wrap ic-amber">
@@ -159,7 +159,7 @@
           </div>
           <div class="bento-wide-body">
             <h3>专属服务 Token</h3>
-            <p>每个 Token 绑定专属套餐，自动处理或人工定制，灵活满足不同需求。</p>
+            <p>每个 Token 绑定专属能力与套餐，统一承接自动处理、人工定制和复购交付。</p>
           </div>
           <div class="bento-pills">
             <span class="pill pill-violet">自动交付</span>
@@ -173,9 +173,9 @@
     <!-- Projects -->
     <section id="projects" class="projects-section" aria-labelledby="projects-title">
       <div class="section-head">
-        <div class="section-tag">处理项目</div>
-        <h2 class="section-title" id="projects-title">选择您的项目</h2>
-        <p class="section-sub">每个项目都有专属 AI 处理流程，选择最适合您需求的方案</p>
+        <div class="section-tag">能力项目</div>
+        <h2 class="section-title" id="projects-title">选择您的服务项目</h2>
+        <p class="section-sub">每个项目都对应独立能力链路，适配商品化上架、自动执行与结果交付</p>
       </div>
       <div v-if="projectsLoading" class="loading-state" role="status" aria-live="polite">
         <div class="spinner" aria-hidden="true"/>
@@ -195,7 +195,7 @@
             <div class="cover-overlay"/>
           </div>
           <div class="project-body">
-            <span class="project-badge">AI 处理</span>
+            <span class="project-badge">AI 服务</span>
             <h3 class="project-name">{{ proj.name }}</h3>
             <p v-if="proj.description" class="project-desc">{{ proj.description }}</p>
             <transition name="hint-fade">
@@ -208,7 +208,7 @@
               </div>
               <button v-else class="project-action-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                立即使用
+                进入服务
               </button>
             </transition>
           </div>
@@ -226,9 +226,9 @@
     <!-- Gallery -->
     <section id="gallery" class="gallery-section" aria-labelledby="gallery-title">
       <div class="section-head">
-        <div class="section-tag">风格画廊</div>
-        <h2 class="section-title" id="gallery-title">探索艺术风格</h2>
-        <p class="section-sub">六种独特 AI 艺术风格，满足不同创意需求</p>
+        <div class="section-tag">能力场景</div>
+        <h2 class="section-title" id="gallery-title">探索可售卖能力</h2>
+        <p class="section-sub">覆盖图像、文本、自动化和虚拟货源等多类交付场景</p>
       </div>
       <div class="gallery-grid">
         <div v-for="style in artStyles" :key="style.name" class="gallery-item"
@@ -247,9 +247,9 @@
       <div class="cta-inner">
         <div class="cta-glow" aria-hidden="true"/>
         <div class="cta-content">
-          <div class="section-tag" style="margin: 0 auto 16px;">开始创作</div>
-          <h2 class="cta-title" id="cta-title">准备好了吗？</h2>
-          <p class="cta-sub">使用您的专属 Token，立即体验 AI 艺术生成的魔力</p>
+          <div class="section-tag" style="margin: 0 auto 16px;">开始接入</div>
+          <h2 class="cta-title" id="cta-title">准备开始了吗？</h2>
+          <p class="cta-sub">使用您的专属 Token，立即进入小神skills 服务交付流程</p>
           <div class="input-row cta-input-row">
             <label for="token-cta" class="sr-only">输入 Token</label>
             <div class="input-wrap">
@@ -259,7 +259,7 @@
               <input id="token-cta" v-model="tokenInput2" type="text" placeholder="输入 Token" @keyup.enter="go2" autocomplete="off"/>
             </div>
             <button class="btn-primary" :disabled="!tokenInput2.trim()" @click="go2">
-              立即开始
+              立即进入
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </button>
           </div>
@@ -281,9 +281,9 @@
             <rect width="32" height="32" rx="10" fill="url(#lg-foot)"/>
             <path d="M16 7L19.5 13.5H23L17.5 18.5L19.5 24L16 20.5L12.5 24L14.5 18.5L9 13.5H12.5L16 7Z" fill="white" opacity="0.95"/>
           </svg>
-          <span>ArtForge</span>
+          <span>小神skills</span>
         </div>
-        <p class="footer-text">由 Skill Platform 提供支持 &nbsp;&nbsp; AI 驱动的艺术生成服务</p>
+        <p class="footer-text">小神skills · AI 能力商品化与自动交付平台</p>
       </div>
     </footer>
 
@@ -322,12 +322,12 @@ function selectProject(slug: string) {
 }
 
 const artStyles = [
-  { name: '印象派',   desc: '光影流动的色彩世界',   bg: 'linear-gradient(145deg,#667eea 0%,#764ba2 100%)' },
-  { name: '赛博朋克', desc: '霓虹与数据的未来都市', bg: 'linear-gradient(145deg,#f093fb 0%,#f5576c 100%)' },
-  { name: '水墨写意', desc: '东方美学的诗意表达',   bg: 'linear-gradient(145deg,#4facfe 0%,#00f2fe 100%)' },
-  { name: '像素艺术', desc: '复古与现代的创意碰撞', bg: 'linear-gradient(145deg,#43e97b 0%,#38f9d7 100%)' },
-  { name: '油画质感', desc: '厚重纹理的视觉张力',   bg: 'linear-gradient(145deg,#fa709a 0%,#fee140 100%)' },
-  { name: '抽象几何', desc: '极简形式的无限可能',   bg: 'linear-gradient(145deg,#a18cd1 0%,#fbc2eb 100%)' },
+  { name: '图像修复', desc: '老照片修复与清晰增强', bg: 'linear-gradient(145deg,#667eea 0%,#764ba2 100%)' },
+  { name: '虚拟货源', desc: '订单回调与商品同步',   bg: 'linear-gradient(145deg,#f093fb 0%,#f5576c 100%)' },
+  { name: '文案生成', desc: '标题、描述与营销文案', bg: 'linear-gradient(145deg,#4facfe 0%,#00f2fe 100%)' },
+  { name: '流程自动化', desc: '自动执行与结果回传', bg: 'linear-gradient(145deg,#43e97b 0%,#38f9d7 100%)' },
+  { name: '商品上架', desc: '能力配置与套餐售卖',   bg: 'linear-gradient(145deg,#fa709a 0%,#fee140 100%)' },
+  { name: '人工协助', desc: '复杂任务的兜底交付',   bg: 'linear-gradient(145deg,#a18cd1 0%,#fbc2eb 100%)' },
 ]
 </script>
 

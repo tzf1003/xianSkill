@@ -1,1 +1,1 @@
-"""Skill Platform Backend."""
+"""小神skills backend."""

@@ -24,9 +24,9 @@
             <path d="M14 6L17.5 12.5H21L15.5 17L17.5 22L14 18.5L10.5 22L12.5 17L7 12.5H10.5L14 6Z" fill="white" opacity="0.9"/>
             <defs><linearGradient id="wl-grad" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
           </svg>
-          <span>ArtForge</span>
+          <span>小神skills</span>
         </div>
-        <div class="wh-title">{{ projectInfo?.name || tokenInfo?.skill.name || 'AI 图像处理' }}</div>
+        <div class="wh-title">{{ projectInfo?.name || tokenInfo?.skill.name || 'AI 技能交付' }}</div>
         <div class="wh-meta">剩余&nbsp;<b>{{ tokenInfo?.remaining ?? '-' }}</b>&nbsp;次</div>
       </header>
 

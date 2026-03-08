@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     # ── 闲管家虚拟货源接口网关 ──
     xgj_base = settings.XGJ_BASE_URL or settings.BASE_URL
     print("═" * 60)
+    print(f"{settings.APP_NAME} · AI 能力商品化与自动交付平台")
     print("闲管家 · 虚拟货源")
     print(f"  接口网关:      {xgj_base}/xgj/open")
     print(f"  AppKey:        {settings.XGJ_VIRTUAL_APP_KEY}")
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI):
     print("═" * 60)
 
     # ── 闲管家进销存消息推送 URL ──
-    print("闲管家 · 进销存 (ERP)")
+    print(f"{settings.APP_NAME} · 闲管家进销存 (ERP)")
     print(f"  AppKey:        {settings.XGJ_ERP_APP_KEY}")
     print(f"  商品消息推送URL: {xgj_base}/xgj/erp/push/product")
     print(f"  订单消息推送URL: {xgj_base}/xgj/erp/push/order")
