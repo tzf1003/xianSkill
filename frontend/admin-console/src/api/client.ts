@@ -406,6 +406,13 @@ export interface XgjShopSyncResult {
   deleted: number
 }
 
+export interface XgjGoodsSyncResult {
+  synced: number
+  created: number
+  updated: number
+  failed: number
+}
+
 export const listGoods = (limit = 50, offset = 0, status?: number, goodsType?: number) => {
   const q = [status != null ? `status=${status}` : '', goodsType != null ? `goods_type=${goodsType}` : ''].filter(Boolean).join('&')
   return request<PageResult<Goods>>(`${BASE}/goods?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
@@ -416,6 +423,9 @@ export const createGoods = (body: GoodsCreate) =>
 
 export const getGoods = (id: string) =>
   request<Goods>(`${BASE}/goods/${id}`)
+
+export const syncGoodsFromCloud = () =>
+  request<XgjGoodsSyncResult>(`${BASE}/goods/sync`, { method: 'POST' })
 
 export const updateGoods = (id: string, body: GoodsUpdate) =>
   request<Goods>(`${BASE}/goods/${id}`, json('PATCH', body))

@@ -111,10 +111,11 @@ class XGJErpClient(XGJBaseClient):
             "/api/open/product/detail", {"product_id": product_id}
         )
 
-    async def get_product_sku(self, product_id: int) -> Any:
+    async def get_product_sku(self, product_id: int | list[int]) -> Any:
         """查询商品规格（仅多规格商品）。"""
+        product_ids = product_id if isinstance(product_id, list) else [product_id]
         return await self.request(
-            "/api/open/product/sku/list", {"product_id": product_id}
+            "/api/open/product/sku/list", {"product_id": product_ids}
         )
 
     async def create_product(self, product_data: dict[str, Any]) -> Any:

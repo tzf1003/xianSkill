@@ -327,6 +327,7 @@ class GoodsSpecCreate(BaseModel):
     price_cents: int = 0
     stock: int = 0
     enabled: bool = True
+    xgj_sku_id: str | None = None
     xgj_sku_text: str | None = None
     xgj_outer_id: str | None = None
     sku_bindings: list[SpecSkuBindingIn] = []
@@ -337,6 +338,7 @@ class GoodsSpecUpdate(BaseModel):
     price_cents: int | None = None
     stock: int | None = None
     enabled: bool | None = None
+    xgj_sku_id: str | None = None
     xgj_sku_text: str | None = None
     xgj_outer_id: str | None = None
 
@@ -348,6 +350,7 @@ class GoodsSpecOut(BaseModel):
     price_cents: int
     stock: int
     enabled: bool
+    xgj_sku_id: str | None = None
     xgj_sku_text: str | None = None
     xgj_outer_id: str | None = None
     sku_bindings: list[SpecSkuBindingOut] = []
@@ -562,6 +565,13 @@ class XgjShopSyncOut(BaseModel):
     deleted: int
 
 
+class XgjGoodsSyncOut(BaseModel):
+    synced: int
+    created: int
+    updated: int
+    failed: int
+
+
 class XgjOrderOut(BaseModel):
     id: uuid.UUID
     order_no: str
@@ -586,6 +596,7 @@ class SpecVariantIn(BaseModel):
     price_cents: int = 0
     stock: int = 0
     enabled: bool = True
+    xgj_sku_id: str | None = None
     xgj_sku_text: str | None = None
     xgj_outer_id: str | None = None
     sku_bindings: list[SpecSkuBindingIn] = []

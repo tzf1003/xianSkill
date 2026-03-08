@@ -11,6 +11,7 @@
       <div class="toolbar">
         <div class="toolbar-left">
           <span class="total-hint">共 {{ total }} 件商品</span>
+          <span class="readonly-hint">商品数据为云端只读</span>
           <select v-model="filterType" class="filter-select" @change="offset = 0; load()">
             <option :value="undefined">全部类型</option>
             <option :value="1">直充</option>
@@ -23,7 +24,12 @@
             <option :value="2">下架</option>
           </select>
         </div>
-        <button class="btn btn-primary" @click="openCreate">＋ 新建商品</button>
+        <div class="toolbar-right">
+          <span v-if="syncSummary" class="sync-summary">{{ syncSummary }}</span>
+          <button class="btn btn-primary" :disabled="syncingGoods" @click="handleSyncGoods">
+            {{ syncingGoods ? '同步中…' : '从闲管家同步商品' }}
+          </button>
+        </div>
       </div>
 
       <div class="card">
@@ -36,7 +42,7 @@
           </thead>
           <tbody>
             <tr v-if="items.length === 0">
-              <td colspan="11" class="empty-row">暂无数据</td>
+              <td colspan="11" class="empty-row">暂无数据，可点击上方按钮从闲管家同步</td>
             </tr>
             <tr v-for="g in items" :key="g.id">
               <td>
@@ -48,7 +54,7 @@
               <td><span class="badge" :class="typeBadge(g.goods_type)">{{ typeLabel(g.goods_type) }}</span></td>
               <td>
                 <span class="badge" :class="g.multi_spec ? 'badge-info' : 'badge-success'">
-                  {{ g.multi_spec ? `多规格(${g.specs?.length ?? 0})` : '单规格' }}
+                  {{ specLabel(g) }}
                 </span>
               </td>
               <td>{{ g.price_cents }}</td>
@@ -63,10 +69,8 @@
                 </span>
               </td>
               <td>{{ fmt(g.updated_at) }}</td>
-              <td class="action-cell">
-                <button class="btn btn-secondary btn-sm" @click="openEdit(g)">编辑</button>
-                <button v-if="g.multi_spec" class="btn btn-ghost btn-sm" @click="openSpecs(g)">规格</button>
-                <button class="btn btn-danger btn-sm" @click="handleDelete(g)">删除</button>
+              <td>
+                <button class="btn btn-secondary btn-sm" @click="openSpecs(g)">查看规格</button>
               </td>
             </tr>
           </tbody>
@@ -119,13 +123,32 @@
     <!-- ══════════ 新建/编辑商品 Modal ══════════ -->
     <Modal v-model="showGoodsModal" :title="editingGoods ? '编辑商品' : '新建商品'">
       <div class="form-grid">
-        <!-- Logo 上传 -->
         <div class="form-group" style="grid-column:1/-1">
-          <label>商品图片 / Logo</label>
-          <div class="logo-upload-area">
-            <img v-if="logoPreview || goodsForm.logo_url" :src="logoPreview || goodsForm.logo_url!" class="logo-preview" alt="logo" />
-            <div v-else class="logo-placeholder">点击上传图片</div>
-            <input type="file" accept="image/*" class="logo-file-input" @change="onLogoSelected" />
+          <label class="section-label">商品图片</label>
+          <div class="shop-images product-images-panel">
+            <div class="shop-images-head">
+              <div>
+                <div class="section-subtitle">商品图片列表</div>
+                <div class="section-hint">支持多张，第一张会作为主图和列表封面</div>
+              </div>
+              <label class="btn btn-secondary btn-sm upload-btn-inline" :class="{ disabled: uploadingTarget === 'product-images' }">
+                {{ uploadingTarget === 'product-images' ? '上传中…' : '上传商品图片' }}
+                <input type="file" accept="image/*" multiple hidden @change="onProductImagesSelected($event)" />
+              </label>
+            </div>
+            <div v-for="(image, ii) in productImages" :key="ii" class="image-row">
+              <div class="image-main">
+                <img v-if="image.image_url" :src="image.image_url" class="shop-image-preview" alt="商品图片" />
+                <div v-else class="shop-image-empty">未上传</div>
+                <input v-model="image.image_url" placeholder="图片URL *" />
+              </div>
+              <div class="image-actions">
+                <button class="btn btn-secondary btn-sm" :disabled="ii === 0" @click="moveProductImage(ii, -1)">上移</button>
+                <button class="btn btn-secondary btn-sm" :disabled="ii === productImages.length - 1" @click="moveProductImage(ii, 1)">下移</button>
+                <button class="btn btn-danger btn-sm" @click="removeProductImage(ii)">删除</button>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" @click="addProductImage">＋ 手动添加图片 URL</button>
           </div>
         </div>
         <div class="form-group" v-if="editingGoods">
@@ -171,8 +194,8 @@
           <input v-model="goodsForm.xgj_goods_id" placeholder="绑定闲管家后填写（可选）" />
         </div>
         <div class="form-group" style="grid-column:1/-1">
-          <label>描述</label>
-          <textarea v-model="goodsForm.description" rows="2" placeholder="商品描述（可选）"></textarea>
+          <label>商品描述 *</label>
+          <textarea v-model="goodsForm.description" rows="3" placeholder="用于闲管家同步的商品描述"></textarea>
         </div>
 
         <div class="form-group" style="grid-column:1/-1">
@@ -242,35 +265,8 @@
                 <input v-model.number="shop.province" type="number" min="0" placeholder="省份ID *" />
                 <input v-model.number="shop.city" type="number" min="0" placeholder="城市ID *" />
                 <input v-model.number="shop.district" type="number" min="0" placeholder="地区ID *" />
-                <input v-model="shop.title" placeholder="商品标题 *" />
                 <input v-model="shop.service_support" placeholder="服务项，如 SDR,VNR" />
                 <input v-model="shop.white_image_url" placeholder="白底图URL（可选）" style="grid-column:1/-1" />
-                <textarea v-model="shop.content" rows="3" placeholder="商品描述 *" style="grid-column:1/-1"></textarea>
-              </div>
-              <div class="shop-images">
-                <div class="shop-images-head">
-                  <div>
-                    <div class="section-subtitle">店铺图片</div>
-                    <div class="section-hint">第一张会作为主图上传到闲管家</div>
-                  </div>
-                  <label class="btn btn-secondary btn-sm upload-btn-inline" :class="{ disabled: uploadingTarget === `shop-${si}` }">
-                    {{ uploadingTarget === `shop-${si}` ? '上传中…' : '上传图片' }}
-                    <input type="file" accept="image/*" multiple hidden @change="onShopImagesSelected(si, $event)" />
-                  </label>
-                </div>
-                <div v-for="(image, ii) in shop.images" :key="ii" class="image-row">
-                  <div class="image-main">
-                    <img v-if="image.image_url" :src="image.image_url" class="shop-image-preview" alt="店铺图片" />
-                    <div v-else class="shop-image-empty">未上传</div>
-                    <input v-model="image.image_url" placeholder="图片URL *" />
-                  </div>
-                  <div class="image-actions">
-                    <button class="btn btn-secondary btn-sm" :disabled="ii === 0" @click="moveXgjShopImage(si, ii, -1)">上移</button>
-                    <button class="btn btn-secondary btn-sm" :disabled="ii === shop.images.length - 1" @click="moveXgjShopImage(si, ii, 1)">下移</button>
-                    <button class="btn btn-danger btn-sm" @click="removeXgjShopImage(si, ii)">删除</button>
-                  </div>
-                </div>
-                <button class="btn btn-secondary btn-sm" @click="addXgjShopImage(si)">＋ 手动添加图片 URL</button>
               </div>
             </div>
           </div>
@@ -299,82 +295,53 @@
       </template>
     </Modal>
 
-    <!-- ══════════ 多规格管理 Modal ══════════ -->
-    <Modal v-model="showSpecModal" :title="`规格管理 — ${specGoods?.goods_name ?? ''}`">
-      <!-- 规格维度定义 -->
-      <div class="spec-groups-section">
-        <div class="section-title">规格维度 <small>（最多2组）</small></div>
-        <div v-for="(group, gi) in specGroups" :key="gi" class="spec-group-card">
-          <div class="spec-group-header">
-            <input v-model="group.name" placeholder="规格名称，如：颜色、尺码" class="spec-group-name-input" @input="regenerateVariants" />
-            <button class="btn btn-danger btn-sm" @click="removeGroup(gi)">删除维度</button>
+    <!-- ══════════ 规格查看 Modal ══════════ -->
+    <Modal v-model="showSpecModal" :title="`规格 — ${specGoods?.goods_name ?? ''}`">
+      <div class="spec-summary-block">
+        <div class="section-title">规格概览</div>
+        <div class="spec-meta-grid">
+          <div class="spec-meta-item">
+            <span class="spec-meta-label">规格模式</span>
+            <b>{{ specGoods?.multi_spec ? '多规格' : '单规格' }}</b>
           </div>
-          <div class="values-area">
-            <div class="value-chips">
-              <span v-for="(val, vi) in group.values" :key="vi" class="value-chip">
-                {{ val }}
-                <button class="chip-remove" @click="removeValue(gi, vi)">×</button>
-              </span>
-            </div>
-            <div class="add-value-row">
-              <input v-model="group._newValue" placeholder="输入属性值，按回车添加" @keydown.enter.prevent="addValue(gi)" class="add-value-input" />
-              <button class="btn btn-secondary btn-sm" @click="addValue(gi)">添加</button>
-            </div>
-            <div class="value-count-hint">已添加 {{ group.values.length }} / 150 个属性值</div>
+          <div class="spec-meta-item">
+            <span class="spec-meta-label">规格数量</span>
+            <b>{{ specVariants.length }}</b>
           </div>
         </div>
-        <button v-if="specGroups.length < 2" class="btn btn-secondary" @click="addGroup" style="margin-top:8px">＋ 添加规格维度</button>
-
-        <div v-if="specGroups.length > 0" class="combo-hint" :class="{ 'combo-warn': comboCount > 400 }">
-          组合数：{{ comboCount }} / 400
-          <template v-if="specGroups.length === 2">
-            （{{ specGroups[0].values.length }} × {{ specGroups[1].values.length }}）
-          </template>
+        <div v-if="specGroups.length > 0" class="spec-group-tags">
+          <span v-for="(group, gi) in specGroups" :key="gi" class="spec-group-tag">
+            {{ group.name }}：{{ group.values.join(' / ') }}
+          </span>
         </div>
       </div>
 
-      <!-- 变体组合表格 -->
       <div v-if="specVariants.length > 0" class="variants-section">
-        <div class="section-title">规格组合明细 <small>（{{ specVariants.length }}项）</small></div>
-        <div class="batch-set">
-          <span class="batch-label">批量设置：</span>
-          <label class="spec-field"><span>价格(分)</span><input v-model.number="batchPrice" type="number" min="0" /></label>
-          <label class="spec-field"><span>库存</span><input v-model.number="batchStock" type="number" min="0" /></label>
-          <button class="btn btn-secondary btn-sm" @click="applyBatch">应用到全部</button>
-        </div>
-        <div class="variants-table-wrapper">
-          <table class="data-table variants-table">
-            <thead>
-              <tr>
-                <th>组合名称</th>
-                <th>价格(分)</th>
-                <th>库存</th>
-                <th v-for="t in timings" :key="t.value">{{ t.label }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(v, vi) in specVariants" :key="vi">
-                <td><b>{{ v.spec_name }}</b></td>
-                <td><input v-model.number="v.price_cents" type="number" min="0" class="variant-input" /></td>
-                <td><input v-model.number="v.stock" type="number" min="0" class="variant-input" /></td>
-                <td v-for="t in timings" :key="t.value">
-                  <select v-model="v.bindings[t.value]" class="binding-select-sm">
-                    <option :value="null">—</option>
-                    <option v-for="sku in skuOptions" :key="sku.id" :value="sku.id">{{ sku.name }}</option>
-                  </select>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="section-title">规格列表 <small>（{{ specVariants.length }}项）</small></div>
+        <div class="spec-card-list">
+          <div v-for="(variant, vi) in specVariants" :key="vi" class="spec-view-card">
+            <div class="spec-view-head">
+              <div>
+                <div class="spec-view-name">{{ variant.spec_name }}</div>
+                <div class="spec-view-extra">
+                  <span>价格 {{ variant.price_cents }} 分</span>
+                  <span>库存 {{ variant.stock }}</span>
+                  <span>{{ variant.enabled ? '已启用' : '已停用' }}</span>
+                </div>
+              </div>
+              <div v-if="variant.xgjSkuText || variant.xgjOuterId" class="spec-view-remote">
+                <div v-if="variant.xgjSkuText">云端规格：{{ variant.xgjSkuText }}</div>
+                <div v-if="variant.xgjOuterId">云端编码：{{ variant.xgjOuterId }}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+      <div v-else class="empty-inline">当前商品还没有规格明细。</div>
 
       <p v-if="specErr" class="error-text">{{ specErr }}</p>
       <template #footer>
-        <button class="btn btn-secondary" @click="showSpecModal = false">取消</button>
-        <button class="btn btn-primary" :disabled="specSaving || comboCount > 400" @click="handleSaveSpecs">
-          {{ specSaving ? '保存中…' : '保存全部' }}
-        </button>
+        <button class="btn btn-primary" @click="showSpecModal = false">关闭</button>
       </template>
     </Modal>
   </div>
@@ -383,11 +350,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import {
-  listGoods, createGoods, updateGoods, deleteGoods, getGoods, uploadGoodsLogo,
+  listGoods, createGoods, updateGoods, deleteGoods, getGoods,
   createGoodsSpec, updateGoodsSpec, setSpecBindings, setSpecConfig,
-  listXgjOrders, listSKUs, listXgjShops, uploadAdminImage,
+  listXgjOrders, listSKUs, listXgjShops, uploadAdminImage, syncGoodsFromCloud,
   type Goods, type GoodsSpec, type SKU, type XgjOrder, type SpecGroup,
-  type GoodsXgjProfile, type GoodsXgjProperty, type GoodsXgjPublishShop, type XgjShop,
+  type GoodsXgjProfile, type GoodsXgjProperty, type GoodsXgjPublishShop, type GoodsXgjPublishShopImage, type XgjShop,
 } from '@/api/client'
 import Modal from '@/components/Modal.vue'
 
@@ -400,12 +367,29 @@ const total = ref(0)
 const offset = ref(0)
 const filterType = ref<number | undefined>(undefined)
 const filterStatus = ref<number | undefined>(undefined)
+const syncingGoods = ref(false)
+const syncSummary = ref('')
 const page = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
 async function load() {
   const r = await listGoods(PAGE_SIZE, offset.value, filterStatus.value, filterType.value)
   items.value = r.items; total.value = r.total
+}
+
+async function handleSyncGoods() {
+  syncingGoods.value = true
+  syncSummary.value = ''
+  try {
+    const result = await syncGoodsFromCloud()
+    syncSummary.value = `同步 ${result.synced} 条，新增 ${result.created}，更新 ${result.updated}，失败 ${result.failed}`
+    offset.value = 0
+    await load()
+  } catch (error: unknown) {
+    syncSummary.value = error instanceof Error ? error.message : '同步失败'
+  } finally {
+    syncingGoods.value = false
+  }
 }
 
 // ── SKU 选项（全局加载一次）──
@@ -430,9 +414,8 @@ const showGoodsModal = ref(false)
 const editingGoods = ref<Goods | null>(null)
 const goodsSaving = ref(false)
 const goodsErr = ref('')
-const logoFile = ref<File | null>(null)
-const logoPreview = ref<string | null>(null)
 const uploadingTarget = ref<string | null>(null)
+const productImages = ref<GoodsXgjPublishShopImage[]>([])
 
 const timings = [
   { value: 'after_payment', label: '付款后发货' },
@@ -540,34 +523,31 @@ function removeXgjShop(index: number) {
   goodsForm.value.xgj_publish_shops.splice(index, 1)
 }
 
-function addXgjShopImage(shopIndex: number) {
-  goodsForm.value.xgj_publish_shops[shopIndex].images.push({ image_url: '', sort_order: 0 })
+function addProductImage() {
+  productImages.value.push({ image_url: '', sort_order: productImages.value.length })
 }
 
-function removeXgjShopImage(shopIndex: number, imageIndex: number) {
-  const images = goodsForm.value.xgj_publish_shops[shopIndex].images
-  images.splice(imageIndex, 1)
+function removeProductImage(imageIndex: number) {
+  productImages.value.splice(imageIndex, 1)
 }
 
-function moveXgjShopImage(shopIndex: number, imageIndex: number, offset: -1 | 1) {
-  const images = goodsForm.value.xgj_publish_shops[shopIndex].images
+function moveProductImage(imageIndex: number, offset: -1 | 1) {
+  const images = productImages.value
   const targetIndex = imageIndex + offset
   if (targetIndex < 0 || targetIndex >= images.length) return
   const [image] = images.splice(imageIndex, 1)
   images.splice(targetIndex, 0, image)
 }
 
-async function onShopImagesSelected(shopIndex: number, event: Event) {
+async function onProductImagesSelected(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   if (!files.length) return
-  uploadingTarget.value = `shop-${shopIndex}`
+  uploadingTarget.value = 'product-images'
   goodsErr.value = ''
   try {
     const urls = await Promise.all(files.map(file => uploadAdminImage(file)))
-    goodsForm.value.xgj_publish_shops[shopIndex].images.push(
-      ...urls.map((url, index) => ({ image_url: url, sort_order: goodsForm.value.xgj_publish_shops[shopIndex].images.length + index }))
-    )
+    productImages.value.push(...urls.map((url, index) => ({ image_url: url, sort_order: productImages.value.length + index })))
   } catch (error: unknown) {
     goodsErr.value = error instanceof Error ? error.message : '图片上传失败'
   } finally {
@@ -605,18 +585,10 @@ function reconcilePublishShops() {
   })
 }
 
-function onLogoSelected(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  logoFile.value = file
-  logoPreview.value = URL.createObjectURL(file)
-}
-
 async function openCreate() {
   editingGoods.value = null
   goodsForm.value = defaultGoodsForm()
-  logoFile.value = null; logoPreview.value = null
+  productImages.value = []
   singleSpecBindings.value = { after_payment: null, after_receipt: null, after_review: null }
   goodsErr.value = ''
   await Promise.all([ensureSkuOptions(), ensureXgjShops()])
@@ -647,7 +619,13 @@ async function openEdit(g: Goods) {
         })),
       })),
   }
-  logoFile.value = null; logoPreview.value = null
+  productImages.value = (g.xgj_publish_shops?.[0]?.images?.length
+    ? g.xgj_publish_shops[0].images
+    : (g.logo_url ? [{ image_url: g.logo_url, sort_order: 0 }] : [])
+  ).map((image, imageIndex) => ({
+    ...image,
+    sort_order: image.sort_order ?? imageIndex,
+  }))
   // 单规格：加载默认规格的绑定
   if (!g.multi_spec && g.specs?.length) {
     const spec = g.specs[0]
@@ -668,20 +646,23 @@ async function openEdit(g: Goods) {
 
 async function handleSaveGoods() {
   const f = goodsForm.value
+  const normalizedDescription = (f.description ?? '').trim()
+  const normalizedImages = productImages.value.map((image, imageIndex) => ({ ...image, sort_order: imageIndex }))
   if (!f.goods_name.trim()) { goodsErr.value = '商品名称不能为空'; return }
+  if (!normalizedDescription) { goodsErr.value = '商品描述不能为空'; return }
   if (!f.xgj_profile.channel_cat_id.trim()) { goodsErr.value = '请填写 channel_cat_id'; return }
   if (!f.xgj_publish_shops.length) { goodsErr.value = '请至少配置一个闲管家发布店铺'; return }
   if (f.xgj_publish_shops.some(shop => !shop.xgj_shop_id)) { goodsErr.value = '请选择本地店铺后再保存'; return }
-  if (f.xgj_publish_shops.some(shop => !shop.user_name.trim() || !shop.title.trim() || !shop.content.trim())) {
-    goodsErr.value = '请完整填写发布店铺的会员名、标题和描述'
+  if (f.xgj_publish_shops.some(shop => !shop.user_name.trim())) {
+    goodsErr.value = '请完整填写发布店铺的会员名'
     return
   }
-  if (f.xgj_publish_shops.some(shop => !shop.images.length)) {
-    goodsErr.value = '每个发布店铺至少需要上传一张图片'
+  if (!normalizedImages.length) {
+    goodsErr.value = '请至少上传一张商品图片'
     return
   }
-  if (f.xgj_publish_shops.some(shop => shop.images.some(image => !image.image_url.trim()))) {
-    goodsErr.value = '请完整填写发布店铺图片 URL'
+  if (normalizedImages.some(image => !image.image_url.trim())) {
+    goodsErr.value = '请完整填写商品图片 URL'
     return
   }
   goodsSaving.value = true; goodsErr.value = ''
@@ -690,11 +671,11 @@ async function handleSaveGoods() {
     if (editingGoods.value) {
       savedGoods = await updateGoods(editingGoods.value.id, {
         goods_name: f.goods_name, goods_type: f.goods_type,
-        logo_url: f.logo_url,
+        logo_url: normalizedImages[0]?.image_url || null,
         price_cents: f.price_cents, stock: f.stock, status: f.status,
         multi_spec: f.multi_spec,
         xgj_goods_id: f.xgj_goods_id || undefined,
-        description: f.description,
+        description: normalizedDescription,
         xgj_profile: {
           ...f.xgj_profile,
           notify_url: f.xgj_profile.notify_url || null,
@@ -705,19 +686,21 @@ async function handleSaveGoods() {
           const { xgj_shop, ...rest } = shop
           return {
           ...rest,
+          title: f.goods_name.trim(),
+          content: normalizedDescription,
           white_image_url: shop.white_image_url || null,
           service_support: shop.service_support || null,
           sort_order: shopIndex,
-          images: shop.images.map((image, imageIndex) => ({ ...image, sort_order: imageIndex })),
+          images: normalizedImages,
         }}),
       })
     } else {
       savedGoods = await createGoods({
         goods_type: f.goods_type, goods_name: f.goods_name,
-        logo_url: f.logo_url,
+        logo_url: normalizedImages[0]?.image_url || null,
         price_cents: f.price_cents, stock: f.stock, status: f.status,
         multi_spec: f.multi_spec,
-        description: f.description,
+        description: normalizedDescription,
         xgj_profile: {
           ...f.xgj_profile,
           notify_url: f.xgj_profile.notify_url || null,
@@ -728,17 +711,14 @@ async function handleSaveGoods() {
           const { xgj_shop, ...rest } = shop
           return {
           ...rest,
+          title: f.goods_name.trim(),
+          content: normalizedDescription,
           white_image_url: shop.white_image_url || null,
           service_support: shop.service_support || null,
           sort_order: shopIndex,
-          images: shop.images.map((image, imageIndex) => ({ ...image, sort_order: imageIndex })),
+          images: normalizedImages,
         }}),
       })
-    }
-
-    // 上传 Logo 图片
-    if (logoFile.value) {
-      savedGoods = await uploadGoodsLogo(savedGoods.id, logoFile.value)
     }
 
     // 单规格模式：自动创建/更新默认规格 + 绑定
@@ -778,10 +758,7 @@ async function handleDelete(g: Goods) {
 // ── 多规格管理 Modal ──
 const showSpecModal = ref(false)
 const specGoods = ref<Goods | null>(null)
-const specSaving = ref(false)
 const specErr = ref('')
-const batchPrice = ref(0)
-const batchStock = ref(0)
 
 interface SpecGroupEditing {
   name: string
@@ -789,99 +766,22 @@ interface SpecGroupEditing {
   _newValue: string
 }
 
-interface SpecVariantEditing {
+interface SpecVariantViewing {
   spec_name: string
   price_cents: number
   stock: number
   enabled: boolean
-  bindings: Record<string, string | null>
+  xgjSkuText: string | null
+  xgjOuterId: string | null
 }
 
 const specGroups = ref<SpecGroupEditing[]>([])
-const specVariants = ref<SpecVariantEditing[]>([])
-
-const comboCount = computed(() => {
-  const groups = specGroups.value.filter(g => g.values.length > 0)
-  if (groups.length === 0) return 0
-  if (groups.length === 1) return groups[0].values.length
-  return groups[0].values.length * groups[1].values.length
-})
-
-function addGroup() {
-  if (specGroups.value.length >= 2) return
-  specGroups.value.push({ name: '', values: [], _newValue: '' })
-}
-
-function removeGroup(gi: number) {
-  specGroups.value.splice(gi, 1)
-  regenerateVariants()
-}
-
-function addValue(gi: number) {
-  const group = specGroups.value[gi]
-  const val = group._newValue.trim()
-  if (!val) return
-  if (group.values.length >= 150) { specErr.value = '单个规格最多150个属性值'; return }
-  if (group.values.includes(val)) { specErr.value = '属性值已存在'; return }
-  // 校验组合数
-  const otherLen = specGroups.value.length === 2 ? specGroups.value[1 - gi].values.length : 0
-  const thisNewLen = group.values.length + 1
-  if (specGroups.value.length === 2 && otherLen > 0 && thisNewLen * otherLen > 400) {
-    specErr.value = `组合数将超过400（${thisNewLen} × ${otherLen} = ${thisNewLen * otherLen}）`
-    return
-  }
-  specErr.value = ''
-  group.values.push(val)
-  group._newValue = ''
-  regenerateVariants()
-}
-
-function removeValue(gi: number, vi: number) {
-  specGroups.value[gi].values.splice(vi, 1)
-  specErr.value = ''
-  regenerateVariants()
-}
-
-function regenerateVariants() {
-  const groups = specGroups.value.filter(g => g.name.trim() && g.values.length > 0)
-  if (groups.length === 0) { specVariants.value = []; return }
-
-  // 保存旧变体数据用于恢复
-  const oldMap = new Map(specVariants.value.map(v => [v.spec_name, v]))
-
-  const combos: string[] = []
-  if (groups.length === 1) {
-    for (const v of groups[0].values) combos.push(v)
-  } else {
-    for (const v1 of groups[0].values) {
-      for (const v2 of groups[1].values) combos.push(`${v1}/${v2}`)
-    }
-  }
-
-  specVariants.value = combos.map(name => {
-    const old = oldMap.get(name)
-    return old ? { ...old } : {
-      spec_name: name,
-      price_cents: 0,
-      stock: 0,
-      enabled: true,
-      bindings: { after_payment: null, after_receipt: null, after_review: null },
-    }
-  })
-}
-
-function applyBatch() {
-  for (const v of specVariants.value) {
-    if (batchPrice.value > 0) v.price_cents = batchPrice.value
-    if (batchStock.value > 0) v.stock = batchStock.value
-  }
-}
+const specVariants = ref<SpecVariantViewing[]>([])
 
 async function openSpecs(g: Goods) {
   specGoods.value = g; specErr.value = ''
-  batchPrice.value = 0; batchStock.value = 0
-  const [fresh, skuResult] = await Promise.all([getGoods(g.id), listSKUs(undefined, 200)])
-  skuOptions.value = skuResult.items
+  await ensureSkuOptions()
+  const fresh = await getGoods(g.id)
 
   // 恢复已有的 spec_groups
   const existingGroups: SpecGroup[] = fresh.spec_groups ?? []
@@ -897,41 +797,11 @@ async function openSpecs(g: Goods) {
     price_cents: s.price_cents,
     stock: s.stock,
     enabled: s.enabled,
-    bindings: Object.fromEntries(
-      timings.map(t => {
-        const b = s.sku_bindings?.find(x => x.timing === t.value)
-        return [t.value, b?.sku_id ?? null]
-      })
-    ),
+    xgjSkuText: s.xgj_sku_text ?? null,
+    xgjOuterId: s.xgj_outer_id ?? null,
   }))
 
   showSpecModal.value = true
-}
-
-async function handleSaveSpecs() {
-  if (!specGoods.value) return
-  const gid = specGoods.value.id
-  const groups = specGroups.value.filter(g => g.name.trim() && g.values.length > 0)
-  if (groups.length === 0) { specErr.value = '请至少添加一个规格维度和属性值'; return }
-  if (specVariants.value.length === 0) { specErr.value = '没有可保存的组合'; return }
-
-  specSaving.value = true; specErr.value = ''
-  try {
-    await setSpecConfig(gid, {
-      spec_groups: groups.map(g => ({ name: g.name, values: g.values })),
-      variants: specVariants.value.map(v => ({
-        spec_name: v.spec_name,
-        price_cents: v.price_cents,
-        stock: v.stock,
-        enabled: v.enabled,
-        sku_bindings: timings
-          .filter(t => v.bindings[t.value])
-          .map(t => ({ timing: t.value, sku_id: v.bindings[t.value] })),
-      })),
-    })
-    showSpecModal.value = false; await load()
-  } catch (e: unknown) { specErr.value = e instanceof Error ? e.message : '操作失败' }
-  finally { specSaving.value = false }
 }
 
 // ── 闲管家订单 ──
@@ -949,6 +819,11 @@ async function loadOrders() {
 // ── 工具函数 ──
 function typeLabel(t: number) { return { 1: '直充', 2: '卡密', 3: '券码' }[t] ?? '未知' }
 function typeBadge(t: number) { return { 1: 'badge-info', 2: 'badge-warning', 3: 'badge-success' }[t] ?? '' }
+function specLabel(g: Goods) {
+  if (!g.multi_spec) return '单规格'
+  const specCount = g.specs?.length ?? 0
+  return specCount > 0 ? `多规格(${specCount})` : '多规格'
+}
 function orderStatusLabel(s: number) { return { 0: '待处理', 1: '处理中', 2: '成功', 3: '失败', 4: '退款中', 5: '已退款' }[s] ?? '未知' }
 function orderStatusBadge(s: number) { return { 0: 'badge-expired', 1: 'badge-info', 2: 'badge-active', 3: 'badge-revoked', 4: 'badge-expired', 5: 'badge-revoked' }[s] ?? '' }
 function fmt(iso: string) {
@@ -971,8 +846,9 @@ onMounted(load)
 .tab-btn:hover:not(.active) { color: var(--text); }
 
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.toolbar-left { display: flex; align-items: center; gap: 12px; }
+.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 12px; }
 .total-hint { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
+.readonly-hint, .sync-summary { font-size: .82rem; color: var(--text-muted); }
 .filter-select {
   padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
   font-size: .82rem; background: #fff; color: var(--text);
@@ -1015,6 +891,23 @@ onMounted(load)
 .spec-groups-section { margin-bottom: 20px; }
 .section-title { font-weight: 600; font-size: .95rem; margin-bottom: 10px; color: var(--text); }
 .section-title small { font-weight: 400; color: var(--text-muted); font-size: .8rem; }
+
+.spec-summary-block { margin-bottom: 18px; }
+.spec-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.spec-meta-item {
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); display: flex; flex-direction: column; gap: 6px;
+}
+.spec-meta-label { font-size: .78rem; color: var(--text-muted); }
+.spec-group-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.spec-group-tag { padding: 6px 10px; border-radius: 999px; background: #F3F4F6; color: var(--text); font-size: .82rem; }
+
+.spec-card-list { display: flex; flex-direction: column; gap: 12px; }
+.spec-view-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; background: #fff; }
+.spec-view-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+.spec-view-name { font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.spec-view-extra { display: flex; flex-wrap: wrap; gap: 10px; font-size: .82rem; color: var(--text-muted); }
+.spec-view-remote { font-size: .78rem; color: var(--text-muted); text-align: right; }
 
 .spec-group-card {
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -1114,7 +1007,9 @@ onMounted(load)
 
 @media (max-width: 900px) {
   .xgj-grid, .nested-grid, .shop-picker-grid { grid-template-columns: 1fr; }
+  .spec-meta-grid { grid-template-columns: 1fr; }
   .image-row, .image-main { grid-template-columns: 1fr; }
+  .spec-view-head,
   .image-actions, .shop-images-head, .shop-picker-head { flex-wrap: wrap; }
 }
 .binding-item { display: flex; flex-direction: column; gap: 4px; }

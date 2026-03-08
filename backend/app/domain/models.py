@@ -503,6 +503,7 @@ class GoodsSpec(Base, TimestampMixin):
     price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="规格价格(分)")
     stock: Mapped[int] = mapped_column(Integer, default=0, comment="规格库存")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    xgj_sku_id: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="闲管家云端SKU ID")
     xgj_sku_text: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="闲管家SKU规格文本")
     xgj_outer_id: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="闲管家SKU外部编码")
 
@@ -511,7 +512,10 @@ class GoodsSpec(Base, TimestampMixin):
         "SpecSkuBinding", back_populates="spec", lazy="selectin", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_goods_specs_goods_id", "goods_id"),)
+    __table_args__ = (
+        Index("ix_goods_specs_goods_id", "goods_id"),
+        Index("ix_goods_specs_xgj_sku_id", "goods_id", "xgj_sku_id"),
+    )
 
 
 # ── SpecSkuBinding（规格-SKU 发货时机绑定）───────────────────────────
