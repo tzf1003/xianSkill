@@ -34,6 +34,9 @@ echo " ArtForge — Start Script (Linux / macOS)"
 echo "============================================================"
 echo ""
 
+info "[0/4] 执行数据库迁移"
+(cd backend && python -m alembic upgrade head)
+
 # ── 清理函数：Ctrl+C 时杀掉所有子进程 ──────────────────────────────
 PIDS=()
 cleanup() {

@@ -18,6 +18,17 @@ if not exist "backend\.env" (
 echo.
 echo Starting all services ...
 
+echo [0/4] Running database migrations
+call backend\.venv\Scripts\activate.bat
+pushd backend
+python -m alembic upgrade head
+if errorlevel 1 (
+    echo [ERROR] Database migration failed.
+    popd
+    exit /b 1
+)
+popd
+
 echo [1/4] FastAPI backend      http://localhost:8000
 start "xianSkill - FastAPI" cmd /k "cd /d %~dp0backend && call .venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 

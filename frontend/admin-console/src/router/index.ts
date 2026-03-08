@@ -10,6 +10,7 @@ const router = createRouter({
     { path: '/skills', name: 'skills', component: () => import('@/views/SkillsView.vue') },
     { path: '/skus', name: 'skus', component: () => import('@/views/SKUsView.vue') },
     { path: '/goods', name: 'goods', component: () => import('@/views/GoodsView.vue') },
+    { path: '/shops', name: 'shops', component: () => import('@/views/ShopsView.vue') },
     { path: '/orders', name: 'orders', component: () => import('@/views/OrdersView.vue') },
     { path: '/tokens', name: 'tokens', component: () => import('@/views/TokensView.vue') },
     { path: '/jobs', name: 'jobs', component: () => import('@/views/JobsView.vue') },

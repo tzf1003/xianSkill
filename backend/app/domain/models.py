@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     JSON,
     Boolean,
     DateTime,
@@ -558,6 +559,35 @@ class GoodsSubscription(Base, TimestampMixin):
 
     __table_args__ = (
         Index("ix_goods_subscriptions_goods_id", "goods_id"),
+    )
+
+
+# ── XgjShop（闲管家 ERP 店铺）────────────────────────────────────────
+class XgjShop(Base, TimestampMixin):
+    """闲管家 ERP 授权店铺快照。"""
+
+    __tablename__ = "xgj_shops"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    authorize_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True, comment="授权ID")
+    authorize_expires: Mapped[int] = mapped_column(Integer, nullable=False, comment="授权过期时间")
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="闲鱼会员ID（已废弃）")
+    user_identity: Mapped[str] = mapped_column(String(255), nullable=False, comment="闲鱼号唯一标识")
+    user_name: Mapped[str] = mapped_column(String(255), nullable=False, comment="闲鱼会员名")
+    user_nick: Mapped[str] = mapped_column(String(255), nullable=False, comment="闲鱼号昵称")
+    shop_name: Mapped[str] = mapped_column(String(255), nullable=False, comment="店铺名称")
+    service_support: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="已开通的服务项")
+    is_deposit_enough: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否已缴纳足够的服务保证金")
+    is_pro: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否开通鱼小铺")
+    is_valid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否有效订购中")
+    is_trial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否免费试用版本")
+    valid_start_time: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="订购有效开始时间（已废弃）")
+    valid_end_time: Mapped[int] = mapped_column(Integer, nullable=False, comment="订购有效结束时间")
+    item_biz_types: Mapped[str] = mapped_column(String(255), nullable=False, comment="准入业务类型")
+
+    __table_args__ = (
+        Index("ix_xgj_shops_is_valid", "is_valid"),
+        Index("ix_xgj_shops_user_name", "user_name"),
     )
 
 

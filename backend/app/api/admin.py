@@ -42,6 +42,8 @@ from app.api.schemas import (
     TokenOut,
     WebhookCreate,
     WebhookOut,
+    XgjShopOut,
+    XgjShopSyncOut,
     XgjOrderOut,
     validate_spec_groups,
 )
@@ -70,6 +72,7 @@ from app.domain.models import (
     Token,
     TokenStatus,
     Webhook,
+    XgjShop,
     XgjOrder,
 )
 from app.infra.xgj.base_client import XGJApiError
@@ -801,6 +804,37 @@ async def disable_webhook(webhook_id: uuid.UUID, db: DbSession) -> ApiResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Shops（闲管家店铺管理）
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/shops")
+async def list_xgj_shops(
+    db: DbSession,
+    valid_only: bool | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ApiResponse:
+    stmt = select(XgjShop).order_by(XgjShop.is_valid.desc(), XgjShop.updated_at.desc())
+    count_stmt = select(func.count()).select_from(XgjShop)
+    if valid_only is not None:
+        stmt = stmt.where(XgjShop.is_valid == valid_only)
+        count_stmt = count_stmt.where(XgjShop.is_valid == valid_only)
+    result = await db.execute(stmt.limit(limit).offset(offset))
+    items = result.scalars().all()
+    total = (await db.execute(count_stmt)).scalar_one()
+    return ApiResponse(data={
+        "total": total,
+        "items": [XgjShopOut.model_validate(shop).model_dump(mode="json") for shop in items],
+    })
+
+
+@router.post("/shops/sync")
+async def sync_xgj_shops(db: DbSession) -> ApiResponse:
+    result = await _sync_xgj_shops(db)
+    return ApiResponse(data=result.model_dump())
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Goods（虚拟货源商品管理）
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -857,6 +891,110 @@ def _get_erp_client() -> XGJErpClient:
     return XGJErpClient(
         app_key=settings.XGJ_ERP_APP_KEY,
         app_secret=settings.XGJ_ERP_APP_SECRET,
+    )
+
+
+def _normalize_xgj_shop_list(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        shops = payload.get("list")
+        if isinstance(shops, list):
+            return [item for item in shops if isinstance(item, dict)]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    raise HTTPException(status_code=502, detail="闲管家店铺返回结构异常")
+
+
+def _to_int(value: Any, *, required: bool = False, field_name: str = "") -> int | None:
+    if value is None or value == "":
+        if required:
+            raise HTTPException(status_code=502, detail=f"闲管家店铺字段缺失: {field_name}")
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        if required:
+            raise HTTPException(status_code=502, detail=f"闲管家店铺字段格式错误: {field_name}")
+        return None
+
+
+def _sync_xgj_shop_entity(shop: XgjShop, data: dict[str, Any]) -> None:
+    shop.authorize_expires = _to_int(data.get("authorize_expires"), required=True, field_name="authorize_expires") or 0
+    shop.user_id = _to_int(data.get("user_id"), field_name="user_id")
+    shop.user_identity = str(data.get("user_identity") or "")
+    shop.user_name = str(data.get("user_name") or "")
+    shop.user_nick = str(data.get("user_nick") or "")
+    shop.shop_name = str(data.get("shop_name") or "")
+    shop.service_support = data.get("service_support") or None
+    shop.is_deposit_enough = bool(data.get("is_deposit_enough", False))
+    shop.is_pro = bool(data.get("is_pro", False))
+    shop.is_valid = bool(data.get("is_valid", False))
+    shop.is_trial = bool(data.get("is_trial", False))
+    shop.valid_start_time = _to_int(data.get("valid_start_time"), field_name="valid_start_time")
+    shop.valid_end_time = _to_int(data.get("valid_end_time"), required=True, field_name="valid_end_time") or 0
+    shop.item_biz_types = str(data.get("item_biz_types") or "")
+
+    missing = [
+        name
+        for name, value in (
+            ("user_identity", shop.user_identity),
+            ("user_name", shop.user_name),
+            ("user_nick", shop.user_nick),
+            ("shop_name", shop.shop_name),
+            ("item_biz_types", shop.item_biz_types),
+        )
+        if not value
+    ]
+    if missing:
+        raise HTTPException(status_code=502, detail=f"闲管家店铺字段缺失: {', '.join(missing)}")
+
+
+async def _sync_xgj_shops(db: DbSession) -> XgjShopSyncOut:
+    if not settings.XGJ_ERP_APP_KEY or not settings.XGJ_ERP_APP_SECRET:
+        raise HTTPException(status_code=503, detail="未配置闲管家 ERP 凭证")
+
+    try:
+        async with _get_erp_client() as client:
+            payload = await client.get_shops()
+    except XGJApiError as exc:
+        raise HTTPException(status_code=502, detail=f"同步闲管家店铺失败: {exc.msg}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"同步闲管家店铺失败: {exc}")
+
+    remote_items = _normalize_xgj_shop_list(payload)
+    existing_result = await db.execute(select(XgjShop))
+    existing_shops = existing_result.scalars().all()
+    existing_by_authorize_id = {shop.authorize_id: shop for shop in existing_shops}
+    remote_ids: set[int] = set()
+    created = 0
+    updated = 0
+
+    for item in remote_items:
+        authorize_id = _to_int(item.get("authorize_id"), required=True, field_name="authorize_id")
+        assert authorize_id is not None
+        remote_ids.add(authorize_id)
+        shop = existing_by_authorize_id.get(authorize_id)
+        if shop is None:
+            shop = XgjShop(authorize_id=authorize_id)
+            db.add(shop)
+            created += 1
+        else:
+            updated += 1
+        _sync_xgj_shop_entity(shop, item)
+
+    deleted = 0
+    for shop in existing_shops:
+        if shop.authorize_id not in remote_ids:
+            await db.delete(shop)
+            deleted += 1
+
+    await db.commit()
+    return XgjShopSyncOut(
+        synced=len(remote_items),
+        created=created,
+        updated=updated,
+        deleted=deleted,
     )
 
 

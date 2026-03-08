@@ -367,6 +367,34 @@ export interface XgjOrder {
   created_at: string
 }
 
+export interface XgjShop {
+  id: string
+  authorize_id: number
+  authorize_expires: number
+  user_id: number | null
+  user_identity: string
+  user_name: string
+  user_nick: string
+  shop_name: string
+  service_support: string | null
+  is_deposit_enough: boolean
+  is_pro: boolean
+  is_valid: boolean
+  is_trial: boolean
+  valid_start_time: number | null
+  valid_end_time: number
+  item_biz_types: string
+  created_at: string
+  updated_at: string
+}
+
+export interface XgjShopSyncResult {
+  synced: number
+  created: number
+  updated: number
+  deleted: number
+}
+
 export const listGoods = (limit = 50, offset = 0, status?: number, goodsType?: number) => {
   const q = [status != null ? `status=${status}` : '', goodsType != null ? `goods_type=${goodsType}` : ''].filter(Boolean).join('&')
   return request<PageResult<Goods>>(`${BASE}/goods?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
@@ -415,6 +443,14 @@ export const setSpecBindings = (goodsId: string, specId: string, bindings: { tim
 
 export const setSpecConfig = (goodsId: string, body: SpecConfigPayload) =>
   request<Goods>(`${BASE}/goods/${goodsId}/spec-config`, json('PUT', body))
+
+export const listXgjShops = (limit = 50, offset = 0, validOnly?: boolean) => {
+  const q = [validOnly != null ? `valid_only=${validOnly}` : ''].filter(Boolean).join('&')
+  return request<PageResult<XgjShop>>(`${BASE}/shops?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
+}
+
+export const syncXgjShops = () =>
+  request<XgjShopSyncResult>(`${BASE}/shops/sync`, { method: 'POST' })
 
 export const listXgjOrders = (limit = 50, offset = 0, status?: number, goodsNo?: string) => {
   const q = [status != null ? `status=${status}` : '', goodsNo ? `goods_no=${goodsNo}` : ''].filter(Boolean).join('&')

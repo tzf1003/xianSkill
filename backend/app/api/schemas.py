@@ -518,6 +518,36 @@ class GoodsOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class XgjShopOut(BaseModel):
+    id: uuid.UUID
+    authorize_id: int
+    authorize_expires: int
+    user_id: int | None
+    user_identity: str
+    user_name: str
+    user_nick: str
+    shop_name: str
+    service_support: str | None
+    is_deposit_enough: bool
+    is_pro: bool
+    is_valid: bool
+    is_trial: bool
+    valid_start_time: int | None
+    valid_end_time: int
+    item_biz_types: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class XgjShopSyncOut(BaseModel):
+    synced: int
+    created: int
+    updated: int
+    deleted: int
+
+
 class XgjOrderOut(BaseModel):
     id: uuid.UUID
     order_no: str
