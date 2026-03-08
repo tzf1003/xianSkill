@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from app.api.schemas import ApiResponse, DeliveryRecordOut, JobOut, OrderCreate, OrderOut, TokenCreate, TokenOut, WebhookCreate, WebhookOut
 from app.core.config import settings
 from app.core.deps import DbSession
+from app.core.url_builder import build_token_url, get_frontend_base_url
 from app.domain.models import Asset, DeliveryRecord, Job, JobStatus, Order, SKU, Skill, Token, TokenStatus, Webhook
 from app.services import job_service, token_service
 
@@ -61,7 +62,7 @@ async def create_order(body: OrderCreate, db: DbSession) -> ApiResponse:
         sku_id=order.sku_id,
         status=order.status.value,
         channel=order.channel,
-        token_url=f"/s/{token.token}",
+        token_url=build_token_url(token.token),
         created_at=order.created_at,
     )
     return ApiResponse(data=out.model_dump(mode="json"))
@@ -77,7 +78,7 @@ async def _fire_order_paid(db, *, order, token, sku, skill) -> None:
             token=token,
             sku=sku,
             skill=skill,
-            base_url=settings.BASE_URL,
+            base_url=get_frontend_base_url(),
         )
     except Exception as exc:
         import logging
@@ -97,7 +98,7 @@ async def get_order(order_id: uuid.UUID, db: DbSession) -> ApiResponse:
         sku_id=order.sku_id,
         status=order.status.value,
         channel=order.channel,
-        token_url=f"/s/{token.token}" if token else None,
+        token_url=build_token_url(token.token) if token else None,
         created_at=order.created_at,
     )
     return ApiResponse(data=out.model_dump(mode="json"))

@@ -51,6 +51,7 @@ from app.api.schemas import (
 )
 from app.core.config import settings
 from app.core.deps import DbSession, create_admin_token, require_admin, get_storage
+from app.core.url_builder import build_token_url, get_frontend_base_url
 from app.domain.models import (
     Asset,
     DeliveryRecord,
@@ -409,7 +410,7 @@ async def create_order(body: OrderCreate, db: DbSession) -> ApiResponse:
         sku_id=order.sku_id,
         status=order.status.value,
         channel=order.channel,
-        token_url=f"/s/{token.token}",
+        token_url=build_token_url(token.token),
         created_at=order.created_at,
     )
     return ApiResponse(data=out.model_dump(mode="json"))
@@ -425,7 +426,7 @@ async def _fire_order_paid(db, *, order, token, sku, skill) -> None:
             token=token,
             sku=sku,
             skill=skill,
-            base_url=settings.BASE_URL,
+            base_url=get_frontend_base_url(),
         )
     except Exception as exc:
         import logging
@@ -447,7 +448,7 @@ async def get_order(order_id: uuid.UUID, db: DbSession) -> ApiResponse:
         sku_id=order.sku_id,
         status=order.status.value,
         channel=order.channel,
-        token_url=f"/s/{token.token}" if token else None,
+        token_url=build_token_url(token.token) if token else None,
         created_at=order.created_at,
     )
     return ApiResponse(data=out.model_dump(mode="json"))
@@ -878,6 +879,7 @@ async def _load_goods_full(db: DbSession, goods_id: uuid.UUID) -> Goods:
     result = await db.execute(
         select(Goods)
         .where(Goods.id == goods_id)
+        .execution_options(populate_existing=True)
         .options(
             selectinload(Goods.xgj_profile),
             selectinload(Goods.xgj_properties),
@@ -1228,6 +1230,24 @@ async def _apply_goods_xgj_data(db: DbSession, goods: Goods, body: GoodsCreate |
         await _replace_xgj_publish_shops(db, goods, body.xgj_publish_shops or [])
 
 
+async def _build_spec_binding_models(db: DbSession, body: list[SpecSkuBindingIn]) -> list[SpecSkuBinding]:
+    seen_timings: set[str] = set()
+    sku_ids = [item.sku_id for item in body if item.sku_id is not None]
+    if sku_ids:
+        result = await db.execute(select(SKU.id).where(SKU.id.in_(sku_ids), SKU.enabled.is_(True)))
+        existing_ids = set(result.scalars().all())
+        if existing_ids != set(sku_ids):
+            raise HTTPException(status_code=422, detail="绑定的SKU不存在或已禁用")
+
+    bindings: list[SpecSkuBinding] = []
+    for item in body:
+        if item.timing in seen_timings:
+            raise HTTPException(status_code=422, detail="同一发货时机只能绑定一个SKU")
+        seen_timings.add(item.timing)
+        bindings.append(SpecSkuBinding(timing=DeliveryTiming(item.timing), sku_id=item.sku_id))
+    return bindings
+
+
 def _raise_goods_read_only() -> None:
     raise HTTPException(status_code=405, detail="商品为云端只读，请使用同步按钮从闲管家拉取数据")
 
@@ -1251,7 +1271,18 @@ async def get_goods(goods_id: uuid.UUID, db: DbSession) -> ApiResponse:
 
 @router.patch("/goods/{goods_id}")
 async def update_goods(goods_id: uuid.UUID, body: GoodsUpdate, db: DbSession) -> ApiResponse:
-    _raise_goods_read_only()
+    goods = await _load_goods_full(db, goods_id)
+    updates = body.model_dump(
+        exclude_unset=True,
+        exclude={"xgj_profile", "xgj_properties", "xgj_publish_shops"},
+    )
+    for key, value in updates.items():
+        setattr(goods, key, value)
+    await _apply_goods_xgj_data(db, goods, body, partial=True)
+    await db.commit()
+    goods = await _load_goods_full(db, goods_id)
+    asyncio.create_task(_notify_goods_change(db, goods))
+    return ApiResponse(data=GoodsOut.model_validate(goods).model_dump(mode="json"))
 
 
 @router.delete("/goods/{goods_id}")
@@ -1295,7 +1326,31 @@ async def upload_admin_image(
 
 @router.post("/goods/{goods_id}/specs")
 async def create_goods_spec(goods_id: uuid.UUID, body: GoodsSpecCreate, db: DbSession) -> ApiResponse:
-    _raise_goods_read_only()
+    goods = await _load_goods_full(db, goods_id)
+    if goods.multi_spec:
+        raise HTTPException(status_code=405, detail="多规格商品请从闲管家同步规格后再绑定SKU")
+    if goods.specs:
+        raise HTTPException(status_code=409, detail="单规格商品已存在默认规格")
+
+    spec = GoodsSpec(
+        goods_id=goods.id,
+        spec_name=body.spec_name,
+        price_cents=body.price_cents,
+        stock=body.stock,
+        enabled=body.enabled,
+        xgj_sku_id=body.xgj_sku_id,
+        xgj_sku_text=body.xgj_sku_text,
+        xgj_outer_id=body.xgj_outer_id,
+    )
+    spec.sku_bindings = await _build_spec_binding_models(db, body.sku_bindings)
+    db.add(spec)
+    goods.price_cents = spec.price_cents
+    goods.stock = spec.stock
+    await db.commit()
+    goods = await _load_goods_full(db, goods_id)
+    created_spec = goods.specs[0]
+    asyncio.create_task(_notify_goods_change(db, goods))
+    return ApiResponse(data=GoodsSpecOut.model_validate(created_spec).model_dump(mode="json"))
 
 
 @router.patch("/goods/{goods_id}/specs/{spec_id}")
@@ -1305,12 +1360,40 @@ async def update_goods_spec(
     body: GoodsSpecUpdate,
     db: DbSession,
 ) -> ApiResponse:
-    _raise_goods_read_only()
+    goods = await _load_goods_full(db, goods_id)
+    spec = next((item for item in goods.specs if item.id == spec_id), None)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="规格不存在")
+    if goods.multi_spec:
+        raise HTTPException(status_code=405, detail="多规格商品规格以闲管家同步数据为准")
+
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(spec, key, value)
+
+    goods.price_cents = spec.price_cents
+    goods.stock = spec.stock
+    await db.commit()
+    goods = await _load_goods_full(db, goods_id)
+    updated_spec = next(item for item in goods.specs if item.id == spec_id)
+    asyncio.create_task(_notify_goods_change(db, goods))
+    return ApiResponse(data=GoodsSpecOut.model_validate(updated_spec).model_dump(mode="json"))
 
 
 @router.delete("/goods/{goods_id}/specs/{spec_id}")
 async def delete_goods_spec(goods_id: uuid.UUID, spec_id: uuid.UUID, db: DbSession) -> ApiResponse:
-    _raise_goods_read_only()
+    goods = await _load_goods_full(db, goods_id)
+    spec = next((item for item in goods.specs if item.id == spec_id), None)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="规格不存在")
+    if goods.multi_spec:
+        raise HTTPException(status_code=405, detail="多规格商品不支持删除同步规格")
+
+    await db.delete(spec)
+    goods.stock = 0
+    await db.commit()
+    asyncio.create_task(_notify_goods_change(db, goods))
+    return ApiResponse(data={"deleted": str(spec_id)})
 
 
 # ── 规格-SKU 发货时机绑定 ─────────────────────────────────────────────
@@ -1322,7 +1405,16 @@ async def set_spec_bindings(
     body: list[SpecSkuBindingIn],
     db: DbSession,
 ) -> ApiResponse:
-    _raise_goods_read_only()
+    goods = await _load_goods_full(db, goods_id)
+    spec = next((item for item in goods.specs if item.id == spec_id), None)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="规格不存在")
+
+    spec.sku_bindings = await _build_spec_binding_models(db, body)
+    await db.commit()
+    goods = await _load_goods_full(db, goods_id)
+    updated_spec = next(item for item in goods.specs if item.id == spec_id)
+    return ApiResponse(data=GoodsSpecOut.model_validate(updated_spec).model_dump(mode="json"))
 
 
 # ── 规格配置（批量设置维度 + 变体）────────────────────────────────────

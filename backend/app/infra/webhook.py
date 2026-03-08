@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from app.core.url_builder import build_token_url
+
 log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
@@ -88,7 +90,7 @@ async def fire_order_paid(
     if not webhooks:
         return
 
-    token_url = f"{base_url.rstrip('/')}/s/{token.token}"
+    token_url = build_token_url(token.token)
     payload = {
         "event": "order.paid",
         "order_id": str(order.id),

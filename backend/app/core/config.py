@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     # --- Webhook ---
     # 对外可访问的服务根 URL，用于生成 token_url 写入 webhook 通知
     BASE_URL: str = "http://localhost:8000"
+    # 用户实际访问的前端根 URL，用于生成 /s/{token} 交付页链接；未配置时回退到 BASE_URL
+    FRONTEND_BASE_URL: str = ""
 
     # --- Admin 登录 ---
     ADMIN_USERNAME: str = "admin"
