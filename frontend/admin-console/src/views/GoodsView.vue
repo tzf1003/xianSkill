@@ -208,13 +208,37 @@
         <div class="form-group" style="grid-column:1/-1">
           <label class="section-label">闲管家发布店铺</label>
           <div class="nested-list">
+            <div class="shop-picker card-lite">
+              <div class="shop-picker-head">
+                <span>从本地店铺中选择</span>
+                <span class="shop-picker-hint">已选 {{ goodsForm.xgj_publish_shops.length }} 家</span>
+              </div>
+              <div v-if="availableXgjShops.length" class="shop-picker-grid">
+                <label v-for="shop in availableXgjShops" :key="shop.id" class="shop-choice" :class="{ selected: isSelectedXgjShop(shop.id) }">
+                  <input
+                    type="checkbox"
+                    :checked="isSelectedXgjShop(shop.id)"
+                    @change="onPublishShopCheckboxChange(shop, $event)"
+                  />
+                  <div class="shop-choice-body">
+                    <b>{{ shop.shop_name }}</b>
+                    <span>{{ shop.user_name }}</span>
+                    <small>{{ shop.service_support || '无服务项' }}</small>
+                  </div>
+                </label>
+              </div>
+              <div v-else class="empty-inline">暂无可用本地店铺，请先去店铺管理同步。</div>
+            </div>
             <div v-for="(shop, si) in goodsForm.xgj_publish_shops" :key="si" class="nested-card">
               <div class="nested-card-head">
-                <b>店铺 {{ si + 1 }}</b>
+                <div class="shop-card-title">
+                  <b>{{ shop.xgj_shop?.shop_name || shop.user_name || `店铺 ${si + 1}` }}</b>
+                  <span class="shop-card-subtitle">{{ shop.xgj_shop?.user_name || shop.user_name }}</span>
+                </div>
                 <button class="btn btn-danger btn-sm" @click="removeXgjShop(si)">删除店铺</button>
               </div>
               <div class="nested-grid">
-                <input v-model="shop.user_name" placeholder="闲鱼会员名 *" />
+                <input v-model="shop.user_name" placeholder="闲鱼会员名 *" :disabled="!!shop.xgj_shop_id" />
                 <input v-model.number="shop.province" type="number" min="0" placeholder="省份ID *" />
                 <input v-model.number="shop.city" type="number" min="0" placeholder="城市ID *" />
                 <input v-model.number="shop.district" type="number" min="0" placeholder="地区ID *" />
@@ -224,15 +248,31 @@
                 <textarea v-model="shop.content" rows="3" placeholder="商品描述 *" style="grid-column:1/-1"></textarea>
               </div>
               <div class="shop-images">
-                <div class="section-subtitle">店铺图片</div>
-                <div v-for="(image, ii) in shop.images" :key="ii" class="image-row">
-                  <input v-model="image.image_url" placeholder="图片URL *" />
-                  <button class="btn btn-danger btn-sm" @click="removeXgjShopImage(si, ii)">删除</button>
+                <div class="shop-images-head">
+                  <div>
+                    <div class="section-subtitle">店铺图片</div>
+                    <div class="section-hint">第一张会作为主图上传到闲管家</div>
+                  </div>
+                  <label class="btn btn-secondary btn-sm upload-btn-inline" :class="{ disabled: uploadingTarget === `shop-${si}` }">
+                    {{ uploadingTarget === `shop-${si}` ? '上传中…' : '上传图片' }}
+                    <input type="file" accept="image/*" multiple hidden @change="onShopImagesSelected(si, $event)" />
+                  </label>
                 </div>
-                <button class="btn btn-secondary btn-sm" @click="addXgjShopImage(si)">＋ 添加图片</button>
+                <div v-for="(image, ii) in shop.images" :key="ii" class="image-row">
+                  <div class="image-main">
+                    <img v-if="image.image_url" :src="image.image_url" class="shop-image-preview" alt="店铺图片" />
+                    <div v-else class="shop-image-empty">未上传</div>
+                    <input v-model="image.image_url" placeholder="图片URL *" />
+                  </div>
+                  <div class="image-actions">
+                    <button class="btn btn-secondary btn-sm" :disabled="ii === 0" @click="moveXgjShopImage(si, ii, -1)">上移</button>
+                    <button class="btn btn-secondary btn-sm" :disabled="ii === shop.images.length - 1" @click="moveXgjShopImage(si, ii, 1)">下移</button>
+                    <button class="btn btn-danger btn-sm" @click="removeXgjShopImage(si, ii)">删除</button>
+                  </div>
+                </div>
+                <button class="btn btn-secondary btn-sm" @click="addXgjShopImage(si)">＋ 手动添加图片 URL</button>
               </div>
             </div>
-            <button class="btn btn-secondary btn-sm" @click="addXgjShop">＋ 添加店铺</button>
           </div>
         </div>
 
@@ -345,9 +385,9 @@ import { ref, computed, onMounted } from 'vue'
 import {
   listGoods, createGoods, updateGoods, deleteGoods, getGoods, uploadGoodsLogo,
   createGoodsSpec, updateGoodsSpec, setSpecBindings, setSpecConfig,
-  listXgjOrders, listSKUs,
+  listXgjOrders, listSKUs, listXgjShops, uploadAdminImage,
   type Goods, type GoodsSpec, type SKU, type XgjOrder, type SpecGroup,
-  type GoodsXgjProfile, type GoodsXgjProperty, type GoodsXgjPublishShop,
+  type GoodsXgjProfile, type GoodsXgjProperty, type GoodsXgjPublishShop, type XgjShop,
 } from '@/api/client'
 import Modal from '@/components/Modal.vue'
 
@@ -377,6 +417,14 @@ async function ensureSkuOptions() {
   }
 }
 
+const availableXgjShops = ref<XgjShop[]>([])
+async function ensureXgjShops() {
+  if (availableXgjShops.value.length === 0) {
+    const r = await listXgjShops(200, 0)
+    availableXgjShops.value = r.items
+  }
+}
+
 // ── 商品 Modal ──
 const showGoodsModal = ref(false)
 const editingGoods = ref<Goods | null>(null)
@@ -384,6 +432,7 @@ const goodsSaving = ref(false)
 const goodsErr = ref('')
 const logoFile = ref<File | null>(null)
 const logoPreview = ref<string | null>(null)
+const uploadingTarget = ref<string | null>(null)
 
 const timings = [
   { value: 'after_payment', label: '付款后发货' },
@@ -420,18 +469,29 @@ function createEmptyXgjProperty(): GoodsXgjProperty {
   }
 }
 
-function createEmptyXgjShop(): GoodsXgjPublishShop {
+function createEmptyXgjShop(shop?: XgjShop): GoodsXgjPublishShop {
   return {
-    user_name: '',
+    xgj_shop_id: shop?.id ?? null,
+    xgj_shop: shop
+      ? {
+        id: shop.id,
+        user_name: shop.user_name,
+        user_nick: shop.user_nick,
+        shop_name: shop.shop_name,
+        service_support: shop.service_support,
+        is_valid: shop.is_valid,
+      }
+      : null,
+    user_name: shop?.user_name ?? '',
     province: 0,
     city: 0,
     district: 0,
     title: '',
     content: '',
     white_image_url: null,
-    service_support: null,
+    service_support: shop?.service_support ?? null,
     sort_order: 0,
-    images: [{ image_url: '', sort_order: 0 }],
+    images: [],
   }
 }
 
@@ -444,7 +504,7 @@ const defaultGoodsForm = () => ({
   description: null as string | null,
   xgj_profile: createDefaultXgjProfile(),
   xgj_properties: [] as GoodsXgjProperty[],
-  xgj_publish_shops: [createEmptyXgjShop()] as GoodsXgjPublishShop[],
+  xgj_publish_shops: [] as GoodsXgjPublishShop[],
 })
 const goodsForm = ref(defaultGoodsForm())
 
@@ -456,12 +516,27 @@ function removeXgjProperty(index: number) {
   goodsForm.value.xgj_properties.splice(index, 1)
 }
 
-function addXgjShop() {
-  goodsForm.value.xgj_publish_shops.push(createEmptyXgjShop())
+function isSelectedXgjShop(shopId: string) {
+  return goodsForm.value.xgj_publish_shops.some(shop => shop.xgj_shop_id === shopId)
+}
+
+function togglePublishShopSelection(selectedShop: XgjShop, checked: boolean) {
+  const current = goodsForm.value.xgj_publish_shops
+  const existing = current.find(shop => shop.xgj_shop_id === selectedShop.id)
+  if (checked) {
+    if (existing) return
+    current.push(createEmptyXgjShop(selectedShop))
+    return
+  }
+  goodsForm.value.xgj_publish_shops = current.filter(shop => shop.xgj_shop_id !== selectedShop.id)
+}
+
+function onPublishShopCheckboxChange(selectedShop: XgjShop, event: Event) {
+  const checked = (event.target as HTMLInputElement | null)?.checked ?? false
+  togglePublishShopSelection(selectedShop, checked)
 }
 
 function removeXgjShop(index: number) {
-  if (goodsForm.value.xgj_publish_shops.length === 1) return
   goodsForm.value.xgj_publish_shops.splice(index, 1)
 }
 
@@ -471,8 +546,63 @@ function addXgjShopImage(shopIndex: number) {
 
 function removeXgjShopImage(shopIndex: number, imageIndex: number) {
   const images = goodsForm.value.xgj_publish_shops[shopIndex].images
-  if (images.length === 1) return
   images.splice(imageIndex, 1)
+}
+
+function moveXgjShopImage(shopIndex: number, imageIndex: number, offset: -1 | 1) {
+  const images = goodsForm.value.xgj_publish_shops[shopIndex].images
+  const targetIndex = imageIndex + offset
+  if (targetIndex < 0 || targetIndex >= images.length) return
+  const [image] = images.splice(imageIndex, 1)
+  images.splice(targetIndex, 0, image)
+}
+
+async function onShopImagesSelected(shopIndex: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  if (!files.length) return
+  uploadingTarget.value = `shop-${shopIndex}`
+  goodsErr.value = ''
+  try {
+    const urls = await Promise.all(files.map(file => uploadAdminImage(file)))
+    goodsForm.value.xgj_publish_shops[shopIndex].images.push(
+      ...urls.map((url, index) => ({ image_url: url, sort_order: goodsForm.value.xgj_publish_shops[shopIndex].images.length + index }))
+    )
+  } catch (error: unknown) {
+    goodsErr.value = error instanceof Error ? error.message : '图片上传失败'
+  } finally {
+    input.value = ''
+    uploadingTarget.value = null
+  }
+}
+
+function reconcilePublishShops() {
+  if (!availableXgjShops.value.length) return
+  const catalog = new Map(availableXgjShops.value.map(shop => [shop.id, shop]))
+  const byUserName = new Map(availableXgjShops.value.map(shop => [shop.user_name, shop]))
+  goodsForm.value.xgj_publish_shops = goodsForm.value.xgj_publish_shops.map((shop, index) => {
+    const matched = (shop.xgj_shop_id ? catalog.get(shop.xgj_shop_id) : undefined) || byUserName.get(shop.user_name)
+    const next = matched ? createEmptyXgjShop(matched) : createEmptyXgjShop()
+    return {
+      ...next,
+      ...shop,
+      xgj_shop_id: matched?.id ?? shop.xgj_shop_id ?? null,
+      xgj_shop: matched
+        ? {
+          id: matched.id,
+          user_name: matched.user_name,
+          user_nick: matched.user_nick,
+          shop_name: matched.shop_name,
+          service_support: matched.service_support,
+          is_valid: matched.is_valid,
+        }
+        : shop.xgj_shop ?? null,
+      user_name: matched?.user_name ?? shop.user_name,
+      service_support: shop.service_support ?? matched?.service_support ?? null,
+      sort_order: shop.sort_order ?? index,
+      images: (shop.images ?? []).map((image, imageIndex) => ({ ...image, sort_order: image.sort_order ?? imageIndex })),
+    }
+  })
 }
 
 function onLogoSelected(e: Event) {
@@ -489,7 +619,7 @@ async function openCreate() {
   logoFile.value = null; logoPreview.value = null
   singleSpecBindings.value = { after_payment: null, after_receipt: null, after_review: null }
   goodsErr.value = ''
-  await ensureSkuOptions()
+  await Promise.all([ensureSkuOptions(), ensureXgjShops()])
   showGoodsModal.value = true
 }
 
@@ -511,7 +641,7 @@ async function openEdit(g: Goods) {
         sort_order: shop.sort_order ?? shopIndex,
         white_image_url: shop.white_image_url ?? null,
         service_support: shop.service_support ?? null,
-        images: (shop.images?.length ? shop.images : [{ image_url: '', sort_order: 0 }]).map((image, imageIndex) => ({
+        images: (shop.images ?? []).map((image, imageIndex) => ({
           ...image,
           sort_order: image.sort_order ?? imageIndex,
         })),
@@ -531,7 +661,8 @@ async function openEdit(g: Goods) {
     singleSpecBindings.value = { after_payment: null, after_receipt: null, after_review: null }
   }
   goodsErr.value = ''
-  await ensureSkuOptions()
+  await Promise.all([ensureSkuOptions(), ensureXgjShops()])
+  reconcilePublishShops()
   showGoodsModal.value = true
 }
 
@@ -540,8 +671,13 @@ async function handleSaveGoods() {
   if (!f.goods_name.trim()) { goodsErr.value = '商品名称不能为空'; return }
   if (!f.xgj_profile.channel_cat_id.trim()) { goodsErr.value = '请填写 channel_cat_id'; return }
   if (!f.xgj_publish_shops.length) { goodsErr.value = '请至少配置一个闲管家发布店铺'; return }
+  if (f.xgj_publish_shops.some(shop => !shop.xgj_shop_id)) { goodsErr.value = '请选择本地店铺后再保存'; return }
   if (f.xgj_publish_shops.some(shop => !shop.user_name.trim() || !shop.title.trim() || !shop.content.trim())) {
     goodsErr.value = '请完整填写发布店铺的会员名、标题和描述'
+    return
+  }
+  if (f.xgj_publish_shops.some(shop => !shop.images.length)) {
+    goodsErr.value = '每个发布店铺至少需要上传一张图片'
     return
   }
   if (f.xgj_publish_shops.some(shop => shop.images.some(image => !image.image_url.trim()))) {
@@ -565,13 +701,15 @@ async function handleSaveGoods() {
           flash_sale_type: f.xgj_profile.flash_sale_type || null,
         },
         xgj_properties: f.xgj_properties.map((item, index) => ({ ...item, sort_order: index })),
-        xgj_publish_shops: f.xgj_publish_shops.map((shop, shopIndex) => ({
-          ...shop,
+        xgj_publish_shops: f.xgj_publish_shops.map((shop, shopIndex) => {
+          const { xgj_shop, ...rest } = shop
+          return {
+          ...rest,
           white_image_url: shop.white_image_url || null,
           service_support: shop.service_support || null,
           sort_order: shopIndex,
           images: shop.images.map((image, imageIndex) => ({ ...image, sort_order: imageIndex })),
-        })),
+        }}),
       })
     } else {
       savedGoods = await createGoods({
@@ -586,13 +724,15 @@ async function handleSaveGoods() {
           flash_sale_type: f.xgj_profile.flash_sale_type || null,
         },
         xgj_properties: f.xgj_properties.map((item, index) => ({ ...item, sort_order: index })),
-        xgj_publish_shops: f.xgj_publish_shops.map((shop, shopIndex) => ({
-          ...shop,
+        xgj_publish_shops: f.xgj_publish_shops.map((shop, shopIndex) => {
+          const { xgj_shop, ...rest } = shop
+          return {
+          ...rest,
           white_image_url: shop.white_image_url || null,
           service_support: shop.service_support || null,
           sort_order: shopIndex,
           images: shop.images.map((image, imageIndex) => ({ ...image, sort_order: imageIndex })),
-        })),
+        }}),
       })
     }
 
@@ -937,16 +1077,45 @@ onMounted(load)
 .xgj-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .checkbox-inline { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--text); }
 .nested-list { display: flex; flex-direction: column; gap: 12px; }
+.card-lite { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--bg); }
+.shop-picker-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.shop-picker-hint, .section-hint { font-size: .75rem; color: var(--text-muted); }
+.shop-picker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.shop-choice {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer;
+}
+.shop-choice.selected { border-color: var(--primary); background: rgba(59, 130, 246, 0.06); }
+.shop-choice-body { display: flex; flex-direction: column; gap: 3px; }
+.shop-choice-body span { font-size: .82rem; color: var(--text); }
+.shop-choice-body small { color: var(--text-muted); }
 .nested-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--bg); }
 .nested-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.shop-card-title { display: flex; flex-direction: column; gap: 4px; }
+.shop-card-subtitle { font-size: .78rem; color: var(--text-muted); }
 .nested-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .nested-remove { grid-column: 1 / -1; justify-self: end; }
 .shop-images { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.shop-images-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .section-subtitle { font-size: .8rem; color: var(--text-muted); font-weight: 600; }
-.image-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.image-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.image-main { display: grid; grid-template-columns: 56px 1fr; gap: 10px; align-items: center; }
+.shop-image-preview, .shop-image-empty {
+  width: 56px; height: 56px; border-radius: 8px; border: 1px solid var(--border);
+  object-fit: cover; background: #fff;
+}
+.shop-image-empty {
+  display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: .72rem;
+}
+.image-actions { display: flex; gap: 6px; }
+.upload-btn-inline { position: relative; overflow: hidden; }
+.upload-btn-inline.disabled { pointer-events: none; opacity: .6; }
+.empty-inline { font-size: .82rem; color: var(--text-muted); padding: 8px 0; }
 
 @media (max-width: 900px) {
-  .xgj-grid, .nested-grid { grid-template-columns: 1fr; }
+  .xgj-grid, .nested-grid, .shop-picker-grid { grid-template-columns: 1fr; }
+  .image-row, .image-main { grid-template-columns: 1fr; }
+  .image-actions, .shop-images-head, .shop-picker-head { flex-wrap: wrap; }
 }
 .binding-item { display: flex; flex-direction: column; gap: 4px; }
 .binding-label { font-size: .75rem; color: var(--text-muted); font-weight: 600; }

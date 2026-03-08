@@ -431,7 +431,19 @@ class GoodsXgjPublishShopImageOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class XgjShopRefOut(BaseModel):
+    id: uuid.UUID
+    user_name: str
+    user_nick: str
+    shop_name: str
+    service_support: str | None
+    is_valid: bool
+
+    model_config = {"from_attributes": True}
+
+
 class GoodsXgjPublishShopIn(BaseModel):
+    xgj_shop_id: uuid.UUID | None = None
     user_name: str = Field(..., max_length=100)
     province: int
     city: int
@@ -446,6 +458,8 @@ class GoodsXgjPublishShopIn(BaseModel):
 
 class GoodsXgjPublishShopOut(BaseModel):
     id: uuid.UUID
+    xgj_shop_id: uuid.UUID | None
+    xgj_shop: XgjShopRefOut | None = None
     user_name: str
     province: int
     city: int

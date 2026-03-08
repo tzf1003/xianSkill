@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
@@ -850,6 +851,7 @@ async def list_goods(
         selectinload(Goods.xgj_profile),
         selectinload(Goods.xgj_properties),
         selectinload(Goods.xgj_publish_shops).selectinload(GoodsXgjPublishShop.images),
+        selectinload(Goods.xgj_publish_shops).selectinload(GoodsXgjPublishShop.xgj_shop),
         selectinload(Goods.specs).selectinload(GoodsSpec.sku_bindings),
     ).order_by(Goods.created_at.desc())
     if status is not None:
@@ -878,6 +880,7 @@ async def _load_goods_full(db: DbSession, goods_id: uuid.UUID) -> Goods:
             selectinload(Goods.xgj_profile),
             selectinload(Goods.xgj_properties),
             selectinload(Goods.xgj_publish_shops).selectinload(GoodsXgjPublishShop.images),
+            selectinload(Goods.xgj_publish_shops).selectinload(GoodsXgjPublishShop.xgj_shop),
             selectinload(Goods.specs).selectinload(GoodsSpec.sku_bindings),
         )
     )
@@ -1056,10 +1059,23 @@ def _replace_xgj_properties(goods: Goods, properties: list[Any]) -> None:
     ]
 
 
-def _replace_xgj_publish_shops(goods: Goods, shops: list[Any]) -> None:
+async def _replace_xgj_publish_shops(db: DbSession, goods: Goods, shops: list[Any]) -> None:
+    selected_shop_ids = [shop_in.xgj_shop_id for shop_in in shops if getattr(shop_in, "xgj_shop_id", None)]
+    if len(selected_shop_ids) != len(set(selected_shop_ids)):
+        raise HTTPException(status_code=422, detail="闲管家发布店铺不能重复选择同一个本地店铺")
+
+    xgj_shops_by_id: dict[uuid.UUID, XgjShop] = {}
+    if selected_shop_ids:
+        result = await db.execute(select(XgjShop).where(XgjShop.id.in_(selected_shop_ids)))
+        xgj_shops_by_id = {shop.id: shop for shop in result.scalars().all()}
+        if len(xgj_shops_by_id) != len(selected_shop_ids):
+            raise HTTPException(status_code=422, detail="所选本地店铺不存在或已被删除")
+
     goods.xgj_publish_shops = []
     for shop_index, shop_in in enumerate(shops):
+        linked_shop = xgj_shops_by_id.get(shop_in.xgj_shop_id) if getattr(shop_in, "xgj_shop_id", None) else None
         shop = GoodsXgjPublishShop(
+            xgj_shop_id=shop_in.xgj_shop_id,
             user_name=shop_in.user_name,
             province=shop_in.province,
             city=shop_in.city,
@@ -1067,7 +1083,7 @@ def _replace_xgj_publish_shops(goods: Goods, shops: list[Any]) -> None:
             title=shop_in.title,
             content=shop_in.content,
             white_image_url=shop_in.white_image_url,
-            service_support=shop_in.service_support,
+            service_support=shop_in.service_support or (linked_shop.service_support if linked_shop else None),
             sort_order=shop_in.sort_order if shop_in.sort_order is not None else shop_index,
             images=[
                 GoodsXgjPublishShopImage(
@@ -1077,6 +1093,8 @@ def _replace_xgj_publish_shops(goods: Goods, shops: list[Any]) -> None:
                 for image_index, image in enumerate(shop_in.images)
             ],
         )
+        if linked_shop is not None:
+            shop.user_name = linked_shop.user_name
         goods.xgj_publish_shops.append(shop)
 
 
@@ -1199,13 +1217,13 @@ async def _sync_goods_to_xgj(db: DbSession, goods_id: uuid.UUID) -> Goods:
     return goods
 
 
-def _apply_goods_xgj_data(goods: Goods, body: GoodsCreate | GoodsUpdate, *, partial: bool) -> None:
+async def _apply_goods_xgj_data(db: DbSession, goods: Goods, body: GoodsCreate | GoodsUpdate, *, partial: bool) -> None:
     if getattr(body, "xgj_profile", None) is not None or not partial:
         _apply_xgj_profile(goods, body.xgj_profile, partial=partial)
     if not partial or body.xgj_properties is not None:
         _replace_xgj_properties(goods, body.xgj_properties or [])
     if not partial or body.xgj_publish_shops is not None:
-        _replace_xgj_publish_shops(goods, body.xgj_publish_shops or [])
+        await _replace_xgj_publish_shops(db, goods, body.xgj_publish_shops or [])
 
 
 @router.post("/goods")
@@ -1234,7 +1252,7 @@ async def create_goods(body: GoodsCreate, db: DbSession) -> ApiResponse:
     )
     db.add(goods)
     await db.flush()
-    _apply_goods_xgj_data(goods, body, partial=False)
+    await _apply_goods_xgj_data(db, goods, body, partial=False)
 
     # 创建规格
     for spec_in in body.specs:
@@ -1286,7 +1304,7 @@ async def update_goods(goods_id: uuid.UUID, body: GoodsUpdate, db: DbSession) ->
         if field in {"xgj_profile", "xgj_properties", "xgj_publish_shops"}:
             continue
         setattr(goods, field, value)
-    _apply_goods_xgj_data(goods, body, partial=True)
+    await _apply_goods_xgj_data(db, goods, body, partial=True)
     await db.flush()
     goods = await _sync_goods_to_xgj(db, goods_id)
     await db.commit()
@@ -1337,6 +1355,29 @@ async def upload_goods_logo(
     goods = await _load_goods_full(db, goods_id)
     asyncio.create_task(_notify_goods_change(db, goods))
     return ApiResponse(data=GoodsOut.model_validate(goods).model_dump(mode="json"))
+
+
+@router.post("/uploads/image")
+async def upload_admin_image(
+    file: UploadFile = File(..., description="后台上传图片"),
+) -> ApiResponse:
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    from app.infra.storage import StorageService
+
+    try:
+        storage = StorageService()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"存储服务不可用: {exc}")
+
+    source_name = file.filename or "image"
+    suffix = Path(source_name).suffix or ".png"
+    safe_stem = Path(source_name).stem.replace(" ", "_") or "image"
+    storage_key = f"admin/uploads/{uuid.uuid4().hex}-{safe_stem}{suffix}"
+    storage.put_bytes(storage_key, data, file.content_type or "image/png")
+    return ApiResponse(data={"url": storage.public_url(storage_key)})
 
 
 # ── 商品规格 ──────────────────────────────────────────────────────────

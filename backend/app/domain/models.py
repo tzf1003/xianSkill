@@ -443,6 +443,9 @@ class GoodsXgjPublishShop(Base, TimestampMixin):
     goods_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("goods.id", ondelete="CASCADE"), nullable=False
     )
+    xgj_shop_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("xgj_shops.id", ondelete="SET NULL"), nullable=True
+    )
     user_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="闲鱼会员名")
     province: Mapped[int] = mapped_column(Integer, nullable=False)
     city: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -454,12 +457,14 @@ class GoodsXgjPublishShop(Base, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     goods: Mapped[Goods] = relationship("Goods", back_populates="xgj_publish_shops")
+    xgj_shop: Mapped["XgjShop | None"] = relationship("XgjShop", back_populates="goods_publish_shops", lazy="selectin")
     images: Mapped[list["GoodsXgjPublishShopImage"]] = relationship(
         "GoodsXgjPublishShopImage", back_populates="shop", lazy="selectin", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
         Index("ix_goods_xgj_publish_shops_goods_id", "goods_id"),
+        Index("ix_goods_xgj_publish_shops_xgj_shop_id", "xgj_shop_id"),
         Index("ix_goods_xgj_publish_shops_sort_order", "goods_id", "sort_order"),
     )
 
@@ -584,6 +589,9 @@ class XgjShop(Base, TimestampMixin):
     valid_start_time: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="订购有效开始时间（已废弃）")
     valid_end_time: Mapped[int] = mapped_column(Integer, nullable=False, comment="订购有效结束时间")
     item_biz_types: Mapped[str] = mapped_column(String(255), nullable=False, comment="准入业务类型")
+    goods_publish_shops: Mapped[list[GoodsXgjPublishShop]] = relationship(
+        "GoodsXgjPublishShop", back_populates="xgj_shop", lazy="selectin"
+    )
 
     __table_args__ = (
         Index("ix_xgj_shops_is_valid", "is_valid"),

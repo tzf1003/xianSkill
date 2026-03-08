@@ -267,8 +267,19 @@ export interface GoodsXgjPublishShopImage {
   sort_order?: number
 }
 
+export interface XgjShopRef {
+  id: string
+  user_name: string
+  user_nick: string
+  shop_name: string
+  service_support: string | null
+  is_valid: boolean
+}
+
 export interface GoodsXgjPublishShop {
   id?: string
+  xgj_shop_id?: string | null
+  xgj_shop?: XgjShopRef | null
   user_name: string
   province: number
   city: number
@@ -427,6 +438,23 @@ export async function uploadGoodsLogo(goodsId: string, file: File): Promise<Good
   const j = await res.json()
   if (j.code !== 0) throw new Error(j.message ?? `HTTP ${res.status}`)
   return j.data as Goods
+}
+
+export async function uploadAdminImage(file: File): Promise<string> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const token = getStoredToken()
+  const res = await fetch(`${BASE}/uploads/image`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  })
+  if (res.status === 401) {
+    clearStoredToken(); window.location.href = '/login'; throw new Error('未登录')
+  }
+  const j = await res.json()
+  if (j.code !== 0) throw new Error(j.message ?? `HTTP ${res.status}`)
+  return j.data.url as string
 }
 
 export const createGoodsSpec = (goodsId: string, body: { spec_name: string; price_cents?: number; stock?: number; enabled?: boolean; sku_bindings?: { timing: string; sku_id?: string | null }[] }) =>
