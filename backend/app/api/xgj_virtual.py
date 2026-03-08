@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy import String, cast, exists, select
+from sqlalchemy import String, cast, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -102,6 +102,95 @@ def _doc_order_status(status: int) -> int:
     if status in {XgjOrderStatus.failed.value, XgjOrderStatus.refunded.value}:
         return 30
     return 10
+
+
+def _is_virtual_sku_delivery_mode(mode: DeliveryMode) -> bool:
+    return mode in {DeliveryMode.auto, DeliveryMode.after_receipt, DeliveryMode.after_review}
+
+
+def _initial_token_uses(sku: SKU, quantity: int) -> int:
+    if sku.delivery_mode == DeliveryMode.auto:
+        return max(1, sku.total_uses * quantity)
+    return 0
+
+
+def _pending_reward_uses(sku: SKU, quantity: int) -> int:
+    if sku.delivery_mode in {DeliveryMode.after_receipt, DeliveryMode.after_review}:
+        return max(1, sku.total_uses * quantity)
+    return 0
+
+
+def _reward_plan_payload(sku: SKU, quantity: int) -> dict[str, Any]:
+    return {
+        "reward_sku_id": str(sku.id),
+        "reward_sku_name": sku.name,
+        "pending_uses": max(1, sku.total_uses * max(1, quantity)),
+        "granted_uses": 0,
+    }
+
+
+async def _build_reward_plans(db: AsyncSession, sku: SKU, quantity: int) -> dict[str, Any]:
+    plans: dict[str, Any] = {}
+    if sku.delivery_mode in {DeliveryMode.after_receipt, DeliveryMode.after_review}:
+        plans[sku.delivery_mode.value] = _reward_plan_payload(sku, quantity)
+
+    if sku.project_id is None:
+        return plans
+
+    result = await db.execute(
+        select(SKU)
+        .where(
+            SKU.project_id == sku.project_id,
+            SKU.enabled.is_(True),
+            SKU.delivery_mode.in_((DeliveryMode.after_receipt, DeliveryMode.after_review)),
+        )
+        .order_by(SKU.created_at.asc())
+    )
+    for reward_sku in result.scalars().all():
+        plans.setdefault(reward_sku.delivery_mode.value, _reward_plan_payload(reward_sku, quantity))
+    return plans
+
+
+async def _find_original_token(
+    db: AsyncSession, biz_order_no: str
+) -> tuple[Token | None, Order | None, XgjOrder | None]:
+    """通过 biz_order_no 找到原始 XGJ 订单及其绑定的 Token。"""
+    stmt = (
+        select(XgjOrder)
+        .where(
+            or_(
+                XgjOrder.source_order_no == biz_order_no,
+                XgjOrder.order_no == biz_order_no,
+            )
+        )
+        .order_by(XgjOrder.created_at.asc())
+    )
+    original_xgj = (await db.execute(stmt)).scalars().first()
+    if not original_xgj:
+        return None, None, None
+
+    token_id = original_xgj.local_token_id
+    if not token_id and isinstance(original_xgj.delivery_info, dict):
+        tid = original_xgj.delivery_info.get("local_token_id")
+        if tid:
+            try:
+                token_id = _uuid.UUID(str(tid))
+            except ValueError:
+                pass
+    if not token_id:
+        return None, None, original_xgj
+
+    token = await db.get(Token, token_id)
+    order_id = original_xgj.local_order_id
+    if not order_id and isinstance(original_xgj.delivery_info, dict):
+        oid = original_xgj.delivery_info.get("local_order_id")
+        if oid:
+            try:
+                order_id = _uuid.UUID(str(oid))
+            except ValueError:
+                pass
+    local_order = await db.get(Order, order_id) if order_id else None
+    return token, local_order, original_xgj
 
 
 def _render_delivery_content(
@@ -322,7 +411,7 @@ def _sku_to_dict(sku: SKU) -> dict[str, Any]:
         "goods_name": sku.name,
         "price": sku.price_cents,
         "stock": 999999,
-        "status": 1 if sku.enabled and sku.delivery_mode == DeliveryMode.auto else 2,
+        "status": 1 if sku.enabled and _is_virtual_sku_delivery_mode(sku.delivery_mode) else 2,
         "update_time": _to_epoch(sku.updated_at or sku.created_at),
         "template": [],
     }
@@ -429,14 +518,28 @@ async def goods_list(
     if goods_type not in (None, "", 2, "2"):
         return _ok({"list": [], "count": 0})
 
-    stmt = select(SKU).where(SKU.enabled.is_(True), SKU.delivery_mode == DeliveryMode.auto)
+    stmt = select(SKU).where(
+        SKU.enabled.is_(True),
+        SKU.delivery_mode.in_([
+            DeliveryMode.auto,
+            DeliveryMode.after_receipt,
+            DeliveryMode.after_review,
+        ]),
+    )
     if keyword:
         stmt = _apply_sku_keyword_filter(stmt, keyword)
     stmt = stmt.order_by(SKU.created_at.desc())
     result = await db.execute(stmt.limit(page_size).offset(offset))
     sku_items = result.scalars().all()
 
-    count_stmt = select(func.count()).select_from(SKU).where(SKU.enabled.is_(True), SKU.delivery_mode == DeliveryMode.auto)
+    count_stmt = select(func.count()).select_from(SKU).where(
+        SKU.enabled.is_(True),
+        SKU.delivery_mode.in_([
+            DeliveryMode.auto,
+            DeliveryMode.after_receipt,
+            DeliveryMode.after_review,
+        ]),
+    )
     if keyword:
         count_stmt = _apply_sku_keyword_filter(count_stmt, keyword)
     total = (await db.execute(count_stmt)).scalar_one()
@@ -462,7 +565,7 @@ async def goods_detail(
     body = await request.json()
     goods_no = body.get("goods_no", "")
     sku = await _get_sku_by_goods_no(db, goods_no)
-    if sku and sku.enabled and sku.delivery_mode == DeliveryMode.auto:
+    if sku and sku.enabled and _is_virtual_sku_delivery_mode(sku.delivery_mode):
         if body.get("goods_type") not in (None, "") and int(body.get("goods_type")) != 2:
             return _err(1100, "商品不存在")
         return _ok(_sku_to_dict(sku))
@@ -593,16 +696,11 @@ async def _create_order(
     if not order_no or not goods_no:
         return _err(1201, "下单参数错误")
 
-    # 检查订单号是否已存在
-    existing = await db.execute(select(XgjOrder).where(XgjOrder.order_no == order_no))
-    if existing.scalar_one_or_none():
-        return _err(1203, "下单管家订单号已存在")
-
     sku_goods = await _get_sku_by_goods_no(db, goods_no)
     if sku_goods is not None:
         if goods_type_required != 2:
             return _err(1201, "商品类型不匹配")
-        if not sku_goods.enabled or sku_goods.delivery_mode != DeliveryMode.auto:
+        if not sku_goods.enabled or not _is_virtual_sku_delivery_mode(sku_goods.delivery_mode):
             return _err(1101, "商品不可用")
 
         max_amount = body.get("max_amount")
@@ -615,6 +713,111 @@ async def _create_order(
                 return _err(1202, "下单金额低于成本价")
 
         out_order_no = f"XGJ-{_uuid.uuid4().hex[:16].upper()}"
+
+        # ── 赠送 SKU：找原始订单 Token 并加次数，用原 Token 发货 ──
+        if sku_goods.delivery_mode in {DeliveryMode.after_receipt, DeliveryMode.after_review}:
+            # 优先按 order_no 找原始订单（XGJ 同一订单号），其次按 biz_order_no
+            token, local_order, original_xgj = await _find_original_token(db, order_no)
+            if original_xgj is None:
+                biz_order_no = str(body.get("biz_order_no") or "").strip()
+                if biz_order_no and biz_order_no != order_no:
+                    token, local_order, original_xgj = await _find_original_token(db, biz_order_no)
+
+            if original_xgj is None:
+                return _err(1200, "未找到原始订单")
+            if token is None:
+                return _err(1201, "原始订单未绑定Token")
+            if local_order is None:
+                return _err(1201, "原始本地订单不存在")
+
+            reward_uses = max(1, sku_goods.total_uses * quantity)
+            token_service.grant_uses(token, reward_uses)
+
+            delivery_info = _build_delivery_info(
+                order_no=order_no,
+                goods_type=2,
+                goods_name=sku_goods.name,
+                token=token,
+                local_order=local_order,
+                sku=sku_goods,
+            )
+            delivery_info["virtual_source"] = "sku"
+            delivery_info["local_sku_id"] = str(sku_goods.id)
+            delivery_info["reward_type"] = sku_goods.delivery_mode.value
+            delivery_info["reward_uses_granted"] = reward_uses
+            delivery_info["original_order_no"] = original_xgj.order_no
+
+            if original_xgj.order_no == order_no:
+                # 同一 order_no（XGJ 同一订单号）：更新已有 XgjOrder，返回赠送发货内容
+                old_info = dict(original_xgj.delivery_info) if isinstance(original_xgj.delivery_info, dict) else {}
+                old_info["reward_type"] = sku_goods.delivery_mode.value
+                old_info["reward_uses_granted"] = reward_uses
+                old_info["reward_delivery_info"] = delivery_info
+                # ERP 回调去重字段：pending == granted → delta=0 → 跳过
+                old_info["pending_reward_uses"] = reward_uses
+                old_info["granted_reward_uses"] = reward_uses
+                old_info["grant_trigger"] = sku_goods.delivery_mode.value
+                original_xgj.delivery_info = old_info
+                await db.commit()
+                logger.info(
+                    "XGJ virtual: reward granted (same order_no) order_no=%s sku=%s uses=+%s token=%s",
+                    order_no, sku_goods.name, reward_uses, token.id,
+                )
+                payload = {
+                    "order_type": original_xgj.goods_type,
+                    "order_no": order_no,
+                    "out_order_no": original_xgj.out_order_no,
+                    "order_status": 20,
+                    "order_amount": original_xgj.total_price_cents,
+                    "goods_no": goods_no,
+                    "goods_name": sku_goods.name,
+                    "buy_quantity": quantity,
+                    "order_time": _to_epoch(original_xgj.created_at),
+                    "end_time": _now_epoch(),
+                }
+                if delivery_info.get("card_items"):
+                    payload["card_items"] = delivery_info["card_items"]
+                if delivery_info.get("ticket_items"):
+                    payload["ticket_items"] = delivery_info["ticket_items"]
+                if delivery_info.get("remark"):
+                    payload["remark"] = delivery_info["remark"]
+                return _ok(payload)
+            else:
+                # 不同 order_no：创建新的 XgjOrder
+                source = str(body.get("biz_order_no") or order_no).strip()
+                delivery_info["source_order_no"] = source
+                # ERP 回调去重字段
+                delivery_info["pending_reward_uses"] = reward_uses
+                delivery_info["granted_reward_uses"] = reward_uses
+                delivery_info["grant_trigger"] = sku_goods.delivery_mode.value
+                xgj_order = XgjOrder(
+                    order_no=order_no,
+                    out_order_no=out_order_no,
+                    source_order_no=source,
+                    goods_no=goods_no,
+                    spec_id=None,
+                    goods_type=2,
+                    status=XgjOrderStatus.success.value,
+                    quantity=quantity,
+                    total_price_cents=sku_goods.price_cents * quantity,
+                    local_order_id=local_order.id,
+                    local_token_id=token.id,
+                    buyer_info=body.get("biz_content") or body.get("buyer_info") or body,
+                    delivery_info=delivery_info,
+                )
+                db.add(xgj_order)
+                await db.commit()
+                logger.info(
+                    "XGJ virtual: reward order created order_no=%s sku=%s original=%s uses=+%s token=%s",
+                    order_no, sku_goods.name, original_xgj.order_no, reward_uses, token.id,
+                )
+                return _ok(_build_xgj_order_payload(xgj_order, sku_goods.name))
+
+        # ── 基础 SKU：检查重复后创建新订单 + Token ──
+        existing = await db.execute(select(XgjOrder).where(XgjOrder.order_no == order_no))
+        if existing.scalar_one_or_none():
+            return _err(1203, "下单管家订单号已存在")
+
         local_order = Order(sku_id=sku_goods.id, channel="xgj_virtual")
         db.add(local_order)
         await db.flush()
@@ -624,7 +827,7 @@ async def _create_order(
             order_id=local_order.id,
             sku_id=sku_goods.id,
             skill_id=sku_goods.skill_id,
-            total_uses=max(1, sku_goods.total_uses * quantity),
+            total_uses=_initial_token_uses(sku_goods, quantity),
         )
         await db.flush()
 
@@ -638,16 +841,26 @@ async def _create_order(
         )
         delivery_info["virtual_source"] = "sku"
         delivery_info["local_sku_id"] = str(sku_goods.id)
+        delivery_info["grant_trigger"] = sku_goods.delivery_mode.value
+        delivery_info["pending_reward_uses"] = _pending_reward_uses(sku_goods, quantity)
+        delivery_info["granted_reward_uses"] = 0
+        reward_plans = await _build_reward_plans(db, sku_goods, quantity)
+        if reward_plans:
+            delivery_info["reward_plans"] = reward_plans
+        delivery_info["source_order_no"] = str(body.get("biz_order_no") or order_no)
 
         xgj_order = XgjOrder(
             order_no=order_no,
             out_order_no=out_order_no,
+            source_order_no=str(body.get("biz_order_no") or order_no),
             goods_no=goods_no,
             spec_id=None,
             goods_type=2,
             status=XgjOrderStatus.success.value,
             quantity=quantity,
             total_price_cents=sku_goods.price_cents * quantity,
+            local_order_id=local_order.id,
+            local_token_id=token.id,
             buyer_info=body.get("biz_content") or body.get("buyer_info") or body,
             delivery_info=delivery_info,
         )
@@ -657,6 +870,10 @@ async def _create_order(
         return _ok(_build_xgj_order_payload(xgj_order, sku_goods.name))
 
     # 查商品
+    existing = await db.execute(select(XgjOrder).where(XgjOrder.order_no == order_no))
+    if existing.scalar_one_or_none():
+        return _err(1203, "下单管家订单号已存在")
+
     result = await db.execute(
         select(Goods)
         .where(Goods.goods_no == goods_no)
@@ -697,8 +914,8 @@ async def _create_order(
     sku = await db.get(SKU, bound_sku_id)
     if not sku or not sku.enabled:
         return _err(1201, "绑定的SKU不可用")
-    if sku.delivery_mode != DeliveryMode.auto:
-        return _err(1201, "绑定的SKU不是自动发货")
+    if not _is_virtual_sku_delivery_mode(sku.delivery_mode):
+        return _err(1201, "绑定的SKU不是闲管家可用交付模式")
 
     # 生成我方订单号
     out_order_no = f"XGJ-{_uuid.uuid4().hex[:16].upper()}"
@@ -712,7 +929,7 @@ async def _create_order(
         order_id=local_order.id,
         sku_id=sku.id,
         skill_id=sku.skill_id,
-        total_uses=max(1, sku.total_uses * quantity),
+        total_uses=_initial_token_uses(sku, quantity),
     )
     await db.flush()
 
@@ -724,16 +941,26 @@ async def _create_order(
         local_order=local_order,
         sku=sku,
     )
+    delivery_info["grant_trigger"] = sku.delivery_mode.value
+    delivery_info["pending_reward_uses"] = _pending_reward_uses(sku, quantity)
+    delivery_info["granted_reward_uses"] = 0
+    reward_plans = await _build_reward_plans(db, sku, quantity)
+    if reward_plans:
+        delivery_info["reward_plans"] = reward_plans
+    delivery_info["source_order_no"] = str(body.get("biz_order_no") or order_no)
 
     xgj_order = XgjOrder(
         order_no=order_no,
         out_order_no=out_order_no,
+        source_order_no=str(body.get("biz_order_no") or order_no),
         goods_no=goods_no,
         spec_id=spec.id if spec is not None else None,
         goods_type=goods.goods_type,
         status=XgjOrderStatus.success.value,
         quantity=quantity,
         total_price_cents=unit_price * quantity,
+        local_order_id=local_order.id,
+        local_token_id=token.id,
         buyer_info=body.get("biz_content") or body.get("buyer_info") or body,
         delivery_info=delivery_info,
     )
@@ -887,12 +1114,12 @@ async def refund_notify(
     if xgj_order:
         xgj_order.status = XgjOrderStatus.refunded.value
         if isinstance(xgj_order.delivery_info, dict):
-            token_id = xgj_order.delivery_info.get("local_token_id")
+            token_id = str(xgj_order.local_token_id) if xgj_order.local_token_id else xgj_order.delivery_info.get("local_token_id")
             if token_id:
                 token = await db.get(Token, _uuid.UUID(str(token_id)))
                 if token:
                     token.status = TokenStatus.revoked
-            order_id = xgj_order.delivery_info.get("local_order_id")
+            order_id = str(xgj_order.local_order_id) if xgj_order.local_order_id else xgj_order.delivery_info.get("local_order_id")
             if order_id:
                 local_order = await db.get(Order, _uuid.UUID(str(order_id)))
                 if local_order:

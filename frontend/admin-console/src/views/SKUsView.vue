@@ -10,7 +10,7 @@
         <thead>
           <tr>
             <th>名称</th><th>Skill ID</th><th>价格（分）</th>
-            <th>次数</th><th>交付模式</th><th>状态</th><th>创建时间</th><th>操作</th>
+            <th>赠送次数</th><th>交付模式</th><th>状态</th><th>创建时间</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -22,7 +22,7 @@
             <td><code class="tiny">{{ s.skill_id.slice(0,8) }}…</code></td>
             <td>{{ s.price_cents }}</td>
             <td>{{ s.total_uses }}</td>
-            <td><span :class="'badge badge-' + s.delivery_mode">{{ s.delivery_mode }}</span></td>
+            <td><span :class="'badge badge-' + s.delivery_mode">{{ deliveryModeLabel(s.delivery_mode) }}</span></td>
             <td><span :class="s.enabled ? 'badge badge-enabled' : 'badge badge-disabled'">{{ s.enabled ? '启用' : '禁用' }}</span></td>
             <td>{{ fmt(s.created_at) }}</td>
             <td><button class="btn btn-secondary btn-sm" @click="openEdit(s)">编辑</button></td>
@@ -61,15 +61,18 @@
           <input v-model.number="form.price_cents" type="number" min="0" />
         </div>
         <div class="form-group">
-          <label>次数</label>
+          <label>赠送次数</label>
           <input v-model.number="form.total_uses" type="number" min="1" />
         </div>
         <div class="form-group" style="grid-column:1/-1">
           <label>交付模式</label>
           <select v-model="form.delivery_mode">
-            <option value="auto">auto（自动）</option>
-            <option value="human">human（人工）</option>
+            <option value="auto">付款后发放</option>
+            <option value="after_receipt">收货后赠送</option>
+            <option value="after_review">好评后赠送</option>
+            <option value="human">人工处理</option>
           </select>
+          <small class="field-hint">选择收货后赠送或好评后赠送时，下单会先创建并绑定 token，待闲管家回调后再自动补充赠送次数。</small>
         </div>
         <div class="form-group" style="grid-column:1/-1">
           <label>发货内容模板</label>
@@ -144,6 +147,14 @@ async function handleSave() {
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function deliveryModeLabel(mode: string) {
+  if (mode === 'auto') return '付款后发放'
+  if (mode === 'after_receipt') return '收货后赠送'
+  if (mode === 'after_review') return '好评后赠送'
+  if (mode === 'human') return '人工处理'
+  return mode
 }
 
 onMounted(load)

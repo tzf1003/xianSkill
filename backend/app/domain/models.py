@@ -43,6 +43,8 @@ class SkillType(str, enum.Enum):
 class DeliveryMode(str, enum.Enum):
     auto = "auto"
     human = "human"
+    after_receipt = "after_receipt"
+    after_review = "after_review"
 
 
 class OrderStatus(str, enum.Enum):
@@ -613,11 +615,14 @@ class XgjOrder(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     order_no: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True, comment="闲管家订单号")
     out_order_no: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True, comment="我方订单号")
+    source_order_no: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True, comment="来源业务订单号/闲鱼订单号")
     goods_no: Mapped[str] = mapped_column(String(100), nullable=False, comment="商品编号")
     spec_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, comment="规格ID")
     goods_type: Mapped[int] = mapped_column(Integer, nullable=False, comment="商品类型")
     status: Mapped[int] = mapped_column(Integer, default=0, comment="订单状态")
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     total_price_cents: Mapped[int] = mapped_column(Integer, default=0, comment="总价(分)")
+    local_order_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True, comment="本地订单ID")
+    local_token_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True, comment="本地Token ID")
     buyer_info: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="买家信息/充值账号等")
     delivery_info: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="发货信息(卡密/券码等)")

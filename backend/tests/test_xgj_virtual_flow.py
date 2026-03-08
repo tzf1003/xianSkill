@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.models import Goods, Order, Token, TokenStatus, XgjOrder
+from app.infra.xgj.base_client import XGJBaseClient
 from app.infra.xgj.virtual_client import XGJVirtualClient
 
 
@@ -45,12 +46,28 @@ async def _signed_post(client: AsyncClient, path: str, body: dict):
     )
 
 
+async def _signed_erp_post(client: AsyncClient, path: str, body: dict):
+    body_json = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+    timestamp = int(time.time())
+    body_md5 = XGJBaseClient._md5(body_json)
+    sign = XGJBaseClient._md5(
+        f"{settings.XGJ_ERP_APP_KEY},{body_md5},{timestamp},{settings.XGJ_ERP_APP_SECRET}"
+    )
+    return await client.post(
+        f"{path}?appid={settings.XGJ_ERP_APP_KEY}&timestamp={timestamp}&sign={sign}",
+        content=body_json,
+        headers={"Content-Type": "application/json"},
+    )
+
+
 @pytest.fixture(autouse=True)
 def _configure_virtual_settings(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "XGJ_VIRTUAL_APP_KEY", "10001")
     monkeypatch.setattr(settings, "XGJ_VIRTUAL_APP_SECRET", "virtual-app-secret")
     monkeypatch.setattr(settings, "XGJ_VIRTUAL_MCH_ID", "20001")
     monkeypatch.setattr(settings, "XGJ_VIRTUAL_MCH_SECRET", "virtual-mch-secret")
+    monkeypatch.setattr(settings, "XGJ_ERP_APP_KEY", "30001")
+    monkeypatch.setattr(settings, "XGJ_ERP_APP_SECRET", "erp-app-secret")
     monkeypatch.setattr(settings, "BASE_URL", "http://testserver")
     monkeypatch.setattr(settings, "FRONTEND_BASE_URL", "https://frontend.example.com")
 
@@ -446,3 +463,261 @@ async def test_xgj_virtual_purchase_order_can_use_sku_goods_no(client: AsyncClie
     assert payload["data"]["goods_no"] == goods_no
     assert payload["data"]["goods_name"] == "老照片修复-自动"
     assert "https://frontend.example.com/s/" in payload["data"]["card_items"][0]["card_pwd"]
+
+
+@pytest.mark.asyncio
+async def test_xgj_receipt_reward_order_grants_token_uses(client: AsyncClient, db_session):
+    """下单收货赠送 SKU 时，直接给原始基础订单的 Token 加次数，返回原 Token 发货内容。"""
+    headers = await _admin_headers(client)
+
+    skill_resp = await client.post("/v1/admin/skills", json={"name": "收货赠送技能", "type": "prompt"}, headers=headers)
+    skill_id = skill_resp.json()["data"]["id"]
+
+    # 基础 auto SKU
+    base_sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "基础自动SKU",
+            "delivery_mode": "auto",
+            "price_cents": 1680,
+            "total_uses": 1,
+        },
+        headers=headers,
+    )
+    base_sku_id = base_sku_resp.json()["data"]["id"]
+
+    # 收货赠送 SKU
+    reward_sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "收货赠送SKU",
+            "delivery_mode": "after_receipt",
+            "price_cents": 0,
+            "total_uses": 3,
+        },
+        headers=headers,
+    )
+    reward_sku_id = reward_sku_resp.json()["data"]["id"]
+
+    # 1. 先下基础订单
+    base_resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/order/purchase/create",
+        {
+            "order_no": "XGJ-BASE-001",
+            "goods_no": f"SKU-{base_sku_id}",
+            "buy_quantity": 1,
+            "notify_url": "https://example.com/callback/order",
+            "biz_order_no": "PLATFORM-RECEIPT-001",
+        },
+    )
+    assert base_resp.status_code == 200
+    assert base_resp.json()["code"] == 0
+
+    base_token = (await db_session.execute(select(Token))).scalar_one()
+    assert base_token.total_uses == 1
+
+    # 2. 再下收货赠送订单（同 biz_order_no）
+    reward_resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/order/purchase/create",
+        {
+            "order_no": "XGJ-REWARD-RECEIPT-001",
+            "goods_no": f"SKU-{reward_sku_id}",
+            "buy_quantity": 1,
+            "notify_url": "https://example.com/callback/order",
+            "biz_order_no": "PLATFORM-RECEIPT-001",
+        },
+    )
+    assert reward_resp.status_code == 200
+    reward_data = reward_resp.json()
+    assert reward_data["code"] == 0
+
+    # 3. 验证 Token 加过次数了
+    await db_session.refresh(base_token)
+    assert base_token.total_uses == 4  # 1 + 3
+
+    # 4. 验证发货内容使用的是原始 Token
+    reward_card_pwd = reward_data["data"]["card_items"][0]["card_pwd"]
+    assert base_token.token in reward_card_pwd
+    token_url = f"https://frontend.example.com/s/{base_token.token}"
+    assert token_url in reward_card_pwd
+
+    # 5. 验证 XGJ 赠送订单记录正确链接到原始 Token
+    reward_xgj = (
+        await db_session.execute(select(XgjOrder).where(XgjOrder.order_no == "XGJ-REWARD-RECEIPT-001"))
+    ).scalar_one()
+    assert reward_xgj.local_token_id == base_token.id
+    assert reward_xgj.delivery_info["reward_type"] == "after_receipt"
+    assert reward_xgj.delivery_info["reward_uses_granted"] == 3
+
+
+@pytest.mark.asyncio
+async def test_xgj_review_reward_order_grants_token_uses(client: AsyncClient, db_session):
+    """下单好评赠送 SKU 时，直接给原始基础订单的 Token 加次数，返回原 Token 发货内容。"""
+    headers = await _admin_headers(client)
+
+    skill_resp = await client.post("/v1/admin/skills", json={"name": "好评赠送技能", "type": "prompt"}, headers=headers)
+    skill_id = skill_resp.json()["data"]["id"]
+
+    # 基础 auto SKU
+    base_sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "基础自动SKU-好评",
+            "delivery_mode": "auto",
+            "price_cents": 990,
+            "total_uses": 1,
+        },
+        headers=headers,
+    )
+    base_sku_id = base_sku_resp.json()["data"]["id"]
+
+    # 好评赠送 SKU
+    reward_sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "好评赠送SKU",
+            "delivery_mode": "after_review",
+            "price_cents": 0,
+            "total_uses": 2,
+        },
+        headers=headers,
+    )
+    reward_sku_id = reward_sku_resp.json()["data"]["id"]
+
+    # 1. 先下基础订单
+    base_resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/order/purchase/create",
+        {
+            "order_no": "XGJ-BASE-REVIEW-001",
+            "goods_no": f"SKU-{base_sku_id}",
+            "buy_quantity": 1,
+            "notify_url": "https://example.com/callback/order",
+            "biz_order_no": "PLATFORM-REVIEW-001",
+        },
+    )
+    assert base_resp.status_code == 200
+
+    base_token = (await db_session.execute(select(Token))).scalar_one()
+    assert base_token.total_uses == 1
+
+    # 2. 再下好评赠送订单
+    reward_resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/order/purchase/create",
+        {
+            "order_no": "XGJ-REWARD-REVIEW-001",
+            "goods_no": f"SKU-{reward_sku_id}",
+            "buy_quantity": 1,
+            "notify_url": "https://example.com/callback/order",
+            "biz_order_no": "PLATFORM-REVIEW-001",
+        },
+    )
+    assert reward_resp.status_code == 200
+    reward_data = reward_resp.json()
+    assert reward_data["code"] == 0
+
+    # 3. 验证 Token 加了次数
+    await db_session.refresh(base_token)
+    assert base_token.total_uses == 3  # 1 + 2
+
+    # 4. 发货内容包含原始 Token
+    reward_card_pwd = reward_data["data"]["card_items"][0]["card_pwd"]
+    assert base_token.token in reward_card_pwd
+
+    # 5. 公开接口也能看到更新后的余量
+    token_info_resp = await client.get(f"/v1/public/token/{base_token.token}")
+    assert token_info_resp.status_code == 200
+    assert token_info_resp.json()["data"]["remaining"] == 3
+
+
+@pytest.mark.asyncio
+async def test_xgj_reward_same_order_no(client: AsyncClient, db_session):
+    """XGJ 用同一 order_no 下基础订单和赠送订单（真实 XGJ 行为）。"""
+    headers = await _admin_headers(client)
+
+    skill_resp = await client.post("/v1/admin/skills", json={"name": "同号赠送技能", "type": "prompt"}, headers=headers)
+    skill_id = skill_resp.json()["data"]["id"]
+
+    base_sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "同号基础SKU",
+            "delivery_mode": "auto",
+            "price_cents": 1680,
+            "total_uses": 1,
+            "delivery_content_template": "基础：{$卡密链接}",
+        },
+        headers=headers,
+    )
+    base_sku_id = base_sku_resp.json()["data"]["id"]
+
+    reward_sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "同号收货赠送SKU",
+            "delivery_mode": "after_receipt",
+            "price_cents": 0,
+            "total_uses": 2,
+            "delivery_content_template": "赠送：{$卡密链接}",
+        },
+        headers=headers,
+    )
+    reward_sku_id = reward_sku_resp.json()["data"]["id"]
+
+    # 1. 基础订单
+    base_resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/order/purchase/create",
+        {
+            "order_no": "SAME-ORDER-001",
+            "goods_no": f"SKU-{base_sku_id}",
+            "buy_quantity": 1,
+        },
+    )
+    assert base_resp.status_code == 200
+    assert base_resp.json()["code"] == 0
+    base_card_pwd = base_resp.json()["data"]["card_items"][0]["card_pwd"]
+
+    base_token = (await db_session.execute(select(Token))).scalar_one()
+    assert base_token.total_uses == 1
+    token_url = f"https://frontend.example.com/s/{base_token.token}"
+    assert token_url in base_card_pwd
+
+    # 2. 赠送订单，用同一个 order_no（XGJ 真实行为）
+    reward_resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/order/purchase/create",
+        {
+            "order_no": "SAME-ORDER-001",
+            "goods_no": f"SKU-{reward_sku_id}",
+            "buy_quantity": 1,
+        },
+    )
+    assert reward_resp.status_code == 200
+    reward_data = reward_resp.json()
+    assert reward_data["code"] == 0
+
+    # 3. Token 已加次数
+    await db_session.refresh(base_token)
+    assert base_token.total_uses == 3  # 1 + 2
+
+    # 4. 赠送返回的发货内容包含原始 Token
+    reward_card_pwd = reward_data["data"]["card_items"][0]["card_pwd"]
+    assert token_url in reward_card_pwd
+    assert reward_card_pwd.startswith("赠送：")
+
+    # 5. 数据库只有一条 XgjOrder 记录（同 order_no 不重复插入）
+    all_xgj = (await db_session.execute(select(XgjOrder))).scalars().all()
+    assert len(all_xgj) == 1
+    assert all_xgj[0].order_no == "SAME-ORDER-001"
+    assert all_xgj[0].delivery_info.get("reward_type") == "after_receipt"
+    assert all_xgj[0].delivery_info.get("reward_uses_granted") == 2

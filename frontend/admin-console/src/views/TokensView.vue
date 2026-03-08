@@ -92,7 +92,7 @@
           <select v-model="form.skuId" class="field-select" :disabled="!form.projectId || projectSkus.length === 0">
             <option value="">{{ form.projectId ? (projectSkusLoading ? '加载中' : (projectSkus.length ? '请选择套餐' : '该项目暂无套餐')) : '请先选择项目' }}</option>
             <option v-for="s in projectSkus" :key="s.id" :value="s.id">
-              {{ s.name }}（{{ s.delivery_mode }}，{{ s.total_uses }}次）
+              {{ s.name }}（{{ deliveryModeLabel(s.delivery_mode) }}，{{ s.total_uses }}次）
             </option>
           </select>
 
@@ -179,6 +179,14 @@ function copy(text: string) {
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function deliveryModeLabel(mode: string) {
+  if (mode === 'auto') return '付款后发放'
+  if (mode === 'after_receipt') return '收货后赠送'
+  if (mode === 'after_review') return '好评后赠送'
+  if (mode === 'human') return '人工处理'
+  return mode
 }
 
 async function openCreate() {

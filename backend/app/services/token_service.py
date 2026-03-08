@@ -89,3 +89,10 @@ def finalize_failure(token: Token) -> None:
     if token.reserved_count <= 0:
         raise HTTPException(status_code=409, detail="No reserved count to release")
     token.reserved_count -= 1
+
+
+def grant_uses(token: Token, uses: int) -> None:
+    """给 token 增加可用总次数。"""
+    if uses <= 0:
+        return
+    token.total_uses += uses

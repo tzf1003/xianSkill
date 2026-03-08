@@ -105,7 +105,7 @@ class SKUCreate(BaseModel):
     skill_id: uuid.UUID
     name: str = Field(..., max_length=200)
     price_cents: int = 0
-    delivery_mode: str = Field("auto", pattern=r"^(auto|human)$")
+    delivery_mode: str = Field("auto", pattern=r"^(auto|human|after_receipt|after_review)$")
     total_uses: int = Field(1, ge=1)
     delivery_content_template: str | None = None
     human_sla_hours: int | None = None
