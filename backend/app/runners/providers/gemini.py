@@ -15,6 +15,7 @@ import time
 from PIL import Image
 
 from app.runners.base import BaseProvider, ProviderResult
+from app.runners.providers.image_utils import prepare_input_image
 from app.services.ai_provider_service import AIRuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -50,17 +51,19 @@ class GeminiProvider(BaseProvider):
         # 构建 contents
         contents: list = []
         input_mime = ""
+        original_input_mime = ""
+        request_image_bytes = image_bytes
         if image_bytes:
-            # 探测 MIME 类型
-            try:
-                img_obj = Image.open(io.BytesIO(image_bytes))
-                fmt = (img_obj.format or "JPEG").upper()
-                input_mime = f"image/{fmt.lower()}"
-            except Exception:
-                input_mime = "image/jpeg"
+            prepared = prepare_input_image(
+                image_bytes,
+                supported_mimes={"image/jpeg", "image/png", "image/webp"},
+            )
+            request_image_bytes = prepared.data
+            input_mime = prepared.mime
+            original_input_mime = prepared.original_mime
 
             contents.append(
-                types.Part.from_bytes(data=image_bytes, mime_type=input_mime)
+                types.Part.from_bytes(data=request_image_bytes, mime_type=input_mime)
             )
 
         contents.append(prompt)
@@ -71,7 +74,7 @@ class GeminiProvider(BaseProvider):
             self.config.model,
             image_bytes is not None,
             input_mime,
-            len(image_bytes) if image_bytes else 0,
+            len(request_image_bytes) if request_image_bytes else 0,
             len(prompt),
             prompt,
         )
@@ -144,7 +147,12 @@ class GeminiProvider(BaseProvider):
                     input_image_bytes=len(image_bytes) if image_bytes else 0,
                     output_image_bytes=len(png_bytes),
                     duration_ms=round(duration_ms, 1),
-                    extra={"candidates_count": len(response.candidates), "input_mime": input_mime},
+                    extra={
+                        "candidates_count": len(response.candidates),
+                        "input_mime": input_mime,
+                        "original_input_mime": original_input_mime,
+                        "input_transcoded": bool(image_bytes) and request_image_bytes != image_bytes,
+                    },
                 )
             elif hasattr(part, "text") and part.text:
                 text_parts.append(part.text)

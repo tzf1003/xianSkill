@@ -18,6 +18,7 @@ import time
 from PIL import Image
 
 from app.runners.base import BaseProvider, ProviderResult
+from app.runners.providers.image_utils import prepare_input_image
 from app.services.ai_provider_service import AIRuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -51,28 +52,19 @@ class OpenAIProvider(BaseProvider):
         # 构建消息 content（文本在前，图像在后）
         content: list = []
         input_mime = ""
+        original_input_mime = ""
+        request_image_bytes = image_bytes
 
         content.append({"type": "text", "text": prompt})
 
         if image_bytes:
-            # 校验是否为真实图片，防止伪造后缀上传非图片文件
             _SUPPORTED_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-            try:
-                img_obj = Image.open(io.BytesIO(image_bytes))
-                img_obj.verify()  # 校验图片数据完整性
-                # verify() 后需重新打开获取 format
-                img_obj = Image.open(io.BytesIO(image_bytes))
-                fmt = (img_obj.format or "JPEG").upper()
-                input_mime = f"image/{fmt.lower()}"
-            except Exception:
-                raise RuntimeError(
-                    "上传的文件不是有效的图片格式，请上传 JPEG/PNG/GIF/WebP 图片"
-                )
-            if input_mime not in _SUPPORTED_MIMES:
-                input_mime = "image/jpeg"
-                input_mime = "image/jpeg"
+            prepared = prepare_input_image(image_bytes, supported_mimes=_SUPPORTED_MIMES)
+            request_image_bytes = prepared.data
+            input_mime = prepared.mime
+            original_input_mime = prepared.original_mime
 
-            b64 = base64.standard_b64encode(image_bytes).decode()
+            b64 = base64.standard_b64encode(request_image_bytes).decode()
             content.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:{input_mime};base64,{b64}"},
@@ -84,7 +76,7 @@ class OpenAIProvider(BaseProvider):
             self.config.model,
             image_bytes is not None,
             input_mime,
-            len(image_bytes) if image_bytes else 0,
+            len(request_image_bytes) if request_image_bytes else 0,
             len(prompt),
             prompt,
         )
@@ -153,7 +145,12 @@ class OpenAIProvider(BaseProvider):
                             input_image_bytes=len(image_bytes) if image_bytes else 0,
                             output_image_bytes=len(png_bytes),
                             duration_ms=round(duration_ms, 1),
-                            extra={"input_mime": input_mime, "extracted_from": "text"},
+                            extra={
+                                "input_mime": input_mime,
+                                "original_input_mime": original_input_mime,
+                                "input_transcoded": bool(image_bytes) and request_image_bytes != image_bytes,
+                                "extracted_from": "text",
+                            },
                         )
                     except Exception as e:
                         logger.warning("从文本 data URI 解析图像失败: %s", e)

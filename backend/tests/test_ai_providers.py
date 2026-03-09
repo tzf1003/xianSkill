@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from PIL import Image
 
 from app.core.config import settings
+from app.runners.providers.image_utils import prepare_input_image
 from app.runners.providers.volcengine_provider import VolcengineProvider
 from app.services.ai_provider_service import AIRuntimeConfig
 
@@ -132,6 +133,27 @@ async def test_admin_can_create_volcengine_ai_provider(client: AsyncClient):
     assert data["models"][0]["id"] == "doubao-seedream-3-0-t2i-250415"
 
 
+def _make_mpo_bytes() -> bytes:
+    first = Image.new("RGB", (8, 8), (255, 0, 0))
+    second = Image.new("RGB", (8, 8), (0, 255, 0))
+    buf = io.BytesIO()
+    first.save(buf, format="MPO", save_all=True, append_images=[second])
+    return buf.getvalue()
+
+
+def test_prepare_input_image_transcodes_mpo_to_single_frame_jpeg():
+    mpo_bytes = _make_mpo_bytes()
+
+    prepared = prepare_input_image(mpo_bytes, supported_mimes={"image/jpeg", "image/png"})
+
+    prepared_image = Image.open(io.BytesIO(prepared.data))
+    assert prepared.original_mime == "image/mpo"
+    assert prepared.mime == "image/jpeg"
+    assert prepared.transcoded is True
+    assert prepared_image.format == "JPEG"
+    assert getattr(prepared_image, "n_frames", 1) == 1
+
+
 def test_volcengine_provider_uses_ark_images_generate(monkeypatch: pytest.MonkeyPatch):
     raw_image = io.BytesIO()
     Image.new("RGB", (1200, 800), (255, 0, 0)).save(raw_image, format="PNG")
@@ -185,12 +207,58 @@ def test_volcengine_provider_uses_ark_images_generate(monkeypatch: pytest.Monkey
     assert captured["response_format"] == "b64_json"
     assert captured["output_format"] == "png"
     assert captured["watermark"] is False
-    assert captured["size"] == "2048x2048"
+    assert captured["size"] == "2K"
     assert isinstance(captured["image"], str)
     assert str(captured["image"]).startswith("data:image/png;base64,")
     assert result.output_image_bytes > 0
     assert result.extra["source"] == "b64_json"
-    assert result.extra["request_size"] == "2048x2048"
+    assert result.extra["request_size"] == "2K"
+
+
+def test_volcengine_provider_transcodes_mpo_before_upload(monkeypatch: pytest.MonkeyPatch):
+    source_bytes = _make_mpo_bytes()
+    output = io.BytesIO()
+    Image.new("RGB", (16, 16), (0, 0, 255)).save(output, format="PNG")
+    encoded = base64.b64encode(output.getvalue()).decode("utf-8")
+
+    captured: dict[str, object] = {}
+
+    class FakeImage:
+        b64_json = encoded
+        url = ""
+
+    class FakeResponse:
+        error = None
+        data = [FakeImage()]
+        usage = None
+
+    class FakeImages:
+        def generate(self, **kwargs):
+            captured.update(kwargs)
+            return FakeResponse()
+
+    class FakeArk:
+        def __init__(self, **kwargs):
+            self.images = FakeImages()
+
+    monkeypatch.setitem(sys.modules, "volcenginesdkarkruntime", types.SimpleNamespace(Ark=FakeArk))
+
+    provider = VolcengineProvider(
+        AIRuntimeConfig(
+            protocol="volcengine",
+            model="doubao-seededit-3-0-i2i",
+            api_key="ark-test-key",
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+        )
+    )
+
+    result = provider.complete("test prompt", source_bytes)
+
+    assert isinstance(captured["image"], str)
+    assert str(captured["image"]).startswith("data:image/jpeg;base64,")
+    assert result.extra["input_mime"] == "image/jpeg"
+    assert result.extra["original_input_mime"] == "image/mpo"
+    assert result.extra["input_transcoded"] is True
 
 
 def test_volcengine_provider_requires_new_ark_sdk(monkeypatch: pytest.MonkeyPatch):

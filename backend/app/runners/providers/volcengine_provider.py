@@ -8,6 +8,7 @@ import time
 from PIL import Image
 
 from app.runners.base import BaseProvider, ProviderResult
+from app.runners.providers.image_utils import prepare_input_image
 from app.services.ai_provider_service import AIRuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -41,17 +42,20 @@ class VolcengineProvider(BaseProvider):
             )
 
         input_mime = ""
+        original_input_mime = ""
         image_input: str | None = None
+        request_image_bytes = image_bytes
         request_size = "2K"
         if image_bytes:
-            try:
-                img_obj = Image.open(io.BytesIO(image_bytes))
-                fmt = (img_obj.format or "PNG").upper()
-                input_mime = f"image/{fmt.lower()}"
-            except Exception:
-                input_mime = "image/png"
+            prepared = prepare_input_image(
+                image_bytes,
+                supported_mimes={"image/jpeg", "image/png", "image/webp"},
+            )
+            request_image_bytes = prepared.data
+            input_mime = prepared.mime
+            original_input_mime = prepared.original_mime
 
-            b64 = base64.b64encode(image_bytes).decode("utf-8")
+            b64 = base64.b64encode(request_image_bytes).decode("utf-8")
             image_input = f"data:{input_mime};base64,{b64}"
 
         logger.info(
@@ -59,7 +63,7 @@ class VolcengineProvider(BaseProvider):
             self.config.model,
             image_bytes is not None,
             input_mime,
-            len(image_bytes) if image_bytes else 0,
+            len(request_image_bytes) if request_image_bytes else 0,
             request_size,
             len(prompt),
         )
@@ -121,6 +125,8 @@ class VolcengineProvider(BaseProvider):
             duration_ms=round(duration_ms, 1),
             extra={
                 "input_mime": input_mime,
+                "original_input_mime": original_input_mime,
+                "input_transcoded": bool(image_bytes) and request_image_bytes != image_bytes,
                 "request_size": request_size,
                 "usage": self._usage_to_dict(usage),
                 "source": "b64_json" if b64_json else "url",
