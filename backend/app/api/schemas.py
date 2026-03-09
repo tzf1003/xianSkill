@@ -52,6 +52,37 @@ class AIProviderOut(BaseModel):
     updated_at: datetime
 
 
+class PushChannelCreate(BaseModel):
+    name: str = Field(..., max_length=200)
+    provider: str = Field("bark", pattern=r"^(bark)$")
+    base_url: str = Field(..., max_length=1000)
+    enabled: bool = True
+
+
+class PushChannelUpdate(BaseModel):
+    name: str | None = Field(None, max_length=200)
+    provider: str | None = Field(None, pattern=r"^(bark)$")
+    base_url: str | None = Field(None, max_length=1000)
+    enabled: bool | None = None
+
+
+class PushChannelOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    provider: str
+    base_url: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PushChannelTestIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    body: str = Field(..., min_length=1, max_length=2000)
+
+
 # ── Project ──────────────────────────────────────────────────────────
 class ProjectOptionChoice(BaseModel):
     id: str
@@ -151,6 +182,7 @@ class SKUCreate(BaseModel):
     delivery_mode: str = Field("auto", pattern=r"^(auto|human|after_receipt|after_review)$")
     total_uses: int = Field(1, ge=1)
     delivery_content_template: str | None = None
+    push_channel_id: uuid.UUID | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
     project_id: uuid.UUID | None = None
@@ -165,6 +197,7 @@ class SKUOut(BaseModel):
     total_uses: int
     enabled: bool
     delivery_content_template: str | None = None
+    push_channel_id: uuid.UUID | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
     project_id: uuid.UUID | None = None
@@ -278,6 +311,7 @@ class SKUUpdate(BaseModel):
     total_uses: int | None = None
     enabled: bool | None = None
     delivery_content_template: str | None = None
+    push_channel_id: uuid.UUID | None = None
     human_sla_hours: int | None = None
     human_price_cents: int | None = None
     project_id: uuid.UUID | None = None

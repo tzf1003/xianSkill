@@ -10,6 +10,7 @@ const router = createRouter({
     { path: '/ai-providers', name: 'ai-providers', component: () => import('@/views/AIProvidersView.vue') },
     { path: '/skills', name: 'skills', component: () => import('@/views/SkillsView.vue') },
     { path: '/skus', name: 'skus', component: () => import('@/views/SKUsView.vue') },
+    { path: '/push-channels', name: 'push-channels', component: () => import('@/views/PushChannelsView.vue') },
     { path: '/goods', name: 'goods', component: () => import('@/views/GoodsView.vue') },
     { path: '/shops', name: 'shops', component: () => import('@/views/ShopsView.vue') },
     { path: '/orders', name: 'orders', component: () => import('@/views/OrdersView.vue') },

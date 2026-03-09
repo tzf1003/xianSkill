@@ -126,6 +126,18 @@ class AIProvider(Base, TimestampMixin):
     projects: Mapped[list["Project"]] = relationship("Project", back_populates="ai_provider", lazy="selectin")
 
 
+class PushChannel(Base, TimestampMixin):
+    __tablename__ = "push_channels"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="bark")
+    base_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    skus: Mapped[list["SKU"]] = relationship("SKU", back_populates="push_channel", lazy="selectin")
+
+
 # ── Project ───────────────────────────────────────────────────────────
 class Project(Base, TimestampMixin):
     """options 字段示例：
@@ -220,15 +232,23 @@ class SKU(Base, TimestampMixin):
         Uuid, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True,
         comment="该 SKU 属于哪个项目（决定运行时加载哪个 Project 的选项配置）"
     )
+    push_channel_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("push_channels.id", ondelete="SET NULL"), nullable=True,
+        comment="人工处理消息推送途径"
+    )
     # ── 人工协助扩展字段 ─────────────────────────────────────────────
     human_sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="人工处理 SLA（小时）")
     human_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="人工服务附加定价（分）")
 
     skill: Mapped[Skill] = relationship("Skill", back_populates="skus")
     project: Mapped["Project | None"] = relationship("Project", back_populates="skus", lazy="selectin")
+    push_channel: Mapped["PushChannel | None"] = relationship("PushChannel", back_populates="skus", lazy="selectin")
     orders: Mapped[list[Order]] = relationship("Order", back_populates="sku", lazy="selectin")
 
-    __table_args__ = (Index("ix_skus_skill_id", "skill_id"),)
+    __table_args__ = (
+        Index("ix_skus_skill_id", "skill_id"),
+        Index("ix_skus_push_channel_id", "push_channel_id"),
+    )
 
 
 # ── Order ─────────────────────────────────────────────────────────────

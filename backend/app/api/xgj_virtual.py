@@ -49,6 +49,10 @@ _DEFAULT_DELIVERY_CONTENT_TEMPLATE = (
     "您的订单编号为：{$订单编号}，您的卡密信息为：{$卡密信息}\n"
     "请在此处点击链接，按照提示操作，即可使用：{$卡密链接}"
 )
+_DEFAULT_HUMAN_DELIVERY_CONTENT_TEMPLATE = (
+    "您的订单编号为：{$订单编号}，已进入人工处理。\n"
+    "请点击链接提交或查看处理进度：{$卡密链接}"
+)
 
 # ── 工具函数 ──────────────────────────────────────────────────────────
 
@@ -105,7 +109,7 @@ def _doc_order_status(status: int) -> int:
 
 
 def _is_virtual_sku_delivery_mode(mode: DeliveryMode) -> bool:
-    return mode in {DeliveryMode.auto, DeliveryMode.after_receipt, DeliveryMode.after_review}
+    return mode in {DeliveryMode.auto, DeliveryMode.human, DeliveryMode.after_receipt, DeliveryMode.after_review}
 
 
 def _initial_token_uses(sku: SKU, quantity: int) -> int:
@@ -198,16 +202,17 @@ def _render_delivery_content(
     template: str | None,
     order_no: str,
     goods_name: str,
-    token_value: str,
-    token_url: str,
+    token_value: str | None,
+    token_url: str | None,
     local_order: Order,
     sku: SKU,
 ) -> str:
-    rendered = (template or "").strip() or _DEFAULT_DELIVERY_CONTENT_TEMPLATE
+    default_template = _DEFAULT_HUMAN_DELIVERY_CONTENT_TEMPLATE if sku.delivery_mode == DeliveryMode.human else _DEFAULT_DELIVERY_CONTENT_TEMPLATE
+    rendered = (template or "").strip() or default_template
     replacements = {
         "{$订单编号}": order_no,
-        "{$卡密信息}": token_value,
-        "{$卡密链接}": token_url,
+        "{$卡密信息}": token_value or "",
+        "{$卡密链接}": token_url or "",
         "{$商品名称}": goods_name,
         "{$SKU名称}": sku.name,
         "{$本地订单编号}": str(local_order.id),
@@ -244,34 +249,38 @@ def _build_delivery_info(
     order_no: str,
     goods_type: int,
     goods_name: str,
-    token: Token,
+    token: Token | None,
     local_order: Order,
     sku: SKU,
+    include_delivery_items: bool = True,
 ) -> dict[str, Any]:
-    token_url = build_token_url(token.token)
+    token_value = token.token if token is not None else None
+    token_url = build_token_url(token.token) if token is not None else None
     delivery_content = _render_delivery_content(
         template=sku.delivery_content_template,
         order_no=order_no,
         goods_name=goods_name,
-        token_value=token.token,
+        token_value=token_value,
         token_url=token_url,
         local_order=local_order,
         sku=sku,
     )
     delivery_info: dict[str, Any] = {
-        "token": token.token,
-        "token_url": token_url,
         "delivery_content": delivery_content,
         "local_order_id": str(local_order.id),
-        "local_token_id": str(token.id),
         "goods_name": goods_name,
     }
-    if goods_type == 2:
-        delivery_info["card_items"] = _build_card_items(token.token, delivery_content)
-    elif goods_type == 3:
-        delivery_info["ticket_items"] = _build_ticket_items(token.token, delivery_content, goods_name)
-    else:
-        delivery_info["remark"] = delivery_content
+    if token is not None:
+        delivery_info["token"] = token.token
+        delivery_info["token_url"] = token_url
+        delivery_info["local_token_id"] = str(token.id)
+    if include_delivery_items:
+        if goods_type == 2:
+            delivery_info["card_items"] = _build_card_items(token_value or "", delivery_content)
+        elif goods_type == 3:
+            delivery_info["ticket_items"] = _build_ticket_items(token_value or "", delivery_content, goods_name)
+        else:
+            delivery_info["remark"] = delivery_content
     return delivery_info
 
 
@@ -822,14 +831,16 @@ async def _create_order(
         db.add(local_order)
         await db.flush()
 
-        token = await token_service.create_token(
-            db,
-            order_id=local_order.id,
-            sku_id=sku_goods.id,
-            skill_id=sku_goods.skill_id,
-            total_uses=_initial_token_uses(sku_goods, quantity),
-        )
-        await db.flush()
+        token = None
+        if sku_goods.delivery_mode != DeliveryMode.human:
+            token = await token_service.create_token(
+                db,
+                order_id=local_order.id,
+                sku_id=sku_goods.id,
+                skill_id=sku_goods.skill_id,
+                total_uses=_initial_token_uses(sku_goods, quantity),
+            )
+            await db.flush()
 
         delivery_info = _build_delivery_info(
             order_no=order_no,
@@ -838,6 +849,7 @@ async def _create_order(
             token=token,
             local_order=local_order,
             sku=sku_goods,
+            include_delivery_items=sku_goods.delivery_mode != DeliveryMode.human,
         )
         delivery_info["virtual_source"] = "sku"
         delivery_info["local_sku_id"] = str(sku_goods.id)
@@ -856,11 +868,11 @@ async def _create_order(
             goods_no=goods_no,
             spec_id=None,
             goods_type=2,
-            status=XgjOrderStatus.success.value,
+            status=(XgjOrderStatus.pending.value if sku_goods.delivery_mode == DeliveryMode.human else XgjOrderStatus.success.value),
             quantity=quantity,
             total_price_cents=sku_goods.price_cents * quantity,
             local_order_id=local_order.id,
-            local_token_id=token.id,
+            local_token_id=token.id if token is not None else None,
             buyer_info=body.get("biz_content") or body.get("buyer_info") or body,
             delivery_info=delivery_info,
         )
@@ -924,14 +936,16 @@ async def _create_order(
     db.add(local_order)
     await db.flush()
 
-    token = await token_service.create_token(
-        db,
-        order_id=local_order.id,
-        sku_id=sku.id,
-        skill_id=sku.skill_id,
-        total_uses=_initial_token_uses(sku, quantity),
-    )
-    await db.flush()
+    token = None
+    if sku.delivery_mode != DeliveryMode.human:
+        token = await token_service.create_token(
+            db,
+            order_id=local_order.id,
+            sku_id=sku.id,
+            skill_id=sku.skill_id,
+            total_uses=_initial_token_uses(sku, quantity),
+        )
+        await db.flush()
 
     delivery_info = _build_delivery_info(
         order_no=order_no,
@@ -940,6 +954,7 @@ async def _create_order(
         token=token,
         local_order=local_order,
         sku=sku,
+        include_delivery_items=sku.delivery_mode != DeliveryMode.human,
     )
     delivery_info["grant_trigger"] = sku.delivery_mode.value
     delivery_info["pending_reward_uses"] = _pending_reward_uses(sku, quantity)
@@ -956,11 +971,11 @@ async def _create_order(
         goods_no=goods_no,
         spec_id=spec.id if spec is not None else None,
         goods_type=goods.goods_type,
-        status=XgjOrderStatus.success.value,
+        status=(XgjOrderStatus.pending.value if sku.delivery_mode == DeliveryMode.human else XgjOrderStatus.success.value),
         quantity=quantity,
         total_price_cents=unit_price * quantity,
         local_order_id=local_order.id,
-        local_token_id=token.id,
+        local_token_id=token.id if token is not None else None,
         buyer_info=body.get("biz_content") or body.get("buyer_info") or body,
         delivery_info=delivery_info,
     )

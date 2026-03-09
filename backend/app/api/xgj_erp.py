@@ -21,9 +21,11 @@ from sqlalchemy import or_, select
 
 from app.core.config import settings
 from app.core.deps import DbSession
-from app.domain.models import DeliveryMode, Order, SKU, Token, XgjOrder
+from app.domain.models import DeliveryMode, Order, PushChannel, SKU, Token, XgjOrder, XgjOrderStatus
 from app.infra.xgj.base_client import XGJBaseClient
+from app.infra.xgj.virtual_client import XGJVirtualClient
 from app.services import token_service
+from app.services.push_service import HUMAN_PUSH_TITLE, build_human_order_message_from_erp, extract_xgj_notify_url, send_push_message
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +229,90 @@ async def _handle_reward_push(db, body: dict, *, trigger: DeliveryMode) -> dict:
     return {"result": "success" if ok else "fail", "msg": msg}
 
 
+async def _find_xgj_order_by_source_order(db, *, source_order_no: str) -> XgjOrder | None:
+    if not source_order_no:
+        return None
+    stmt = select(XgjOrder).where(
+        or_(
+            XgjOrder.source_order_no == source_order_no,
+            XgjOrder.order_no == source_order_no,
+            XgjOrder.out_order_no == source_order_no,
+        )
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _notify_human_order_by_erp_push(db, *, body: dict) -> tuple[bool, str] | None:
+    source_order_no = _extract_source_order_no(body)
+    xgj_order = await _find_xgj_order_by_source_order(db, source_order_no=source_order_no)
+    if xgj_order is None:
+        return None
+
+    delivery_info = dict(xgj_order.delivery_info) if isinstance(xgj_order.delivery_info, dict) else {}
+    local_order, sku = await _load_order_context(db, xgj_order, delivery_info)
+    if local_order is None or sku is None or sku.delivery_mode != DeliveryMode.human:
+        return None
+
+    if delivery_info.get("human_erp_notified"):
+        return True, "人工处理已通知"
+
+    if sku.push_channel_id:
+        channel = await db.get(PushChannel, sku.push_channel_id)
+        if channel and channel.enabled:
+            push_body = build_human_order_message_from_erp(
+                sku=sku,
+                token_value=str(delivery_info.get("token") or ""),
+                local_order_id=str(local_order.id),
+                source_order_no=source_order_no,
+                buyer_info=xgj_order.buyer_info if isinstance(xgj_order.buyer_info, dict) else None,
+                erp_payload=body,
+            )
+            try:
+                await send_push_message(channel, title=HUMAN_PUSH_TITLE, body=push_body)
+            except Exception as exc:
+                logger.warning(
+                    "XGJ ERP human push failed: source_order_no=%s channel=%s error=%s",
+                    source_order_no,
+                    channel.id,
+                    exc,
+                )
+
+    notify_url = extract_xgj_notify_url(xgj_order)
+    if not notify_url:
+        return False, "缺少闲管家通知地址"
+
+    from app.api.xgj_virtual import _build_card_items, _build_ticket_items, _build_xgj_order_payload
+
+    delivery_content = str(delivery_info.get("delivery_content") or "").strip()
+    goods_name = str(delivery_info.get("goods_name") or sku.name)
+    if xgj_order.goods_type == 2:
+        delivery_info["card_items"] = _build_card_items(str(delivery_info.get("token") or ""), delivery_content)
+    elif xgj_order.goods_type == 3:
+        delivery_info["ticket_items"] = _build_ticket_items(str(delivery_info.get("token") or ""), delivery_content, goods_name)
+    else:
+        delivery_info["remark"] = delivery_content
+    xgj_order.status = XgjOrderStatus.success.value
+    delivery_info["human_erp_notified"] = True
+    delivery_info["human_erp_notified_at"] = int(time.time())
+    xgj_order.delivery_info = delivery_info
+    payload = _build_xgj_order_payload(
+        xgj_order,
+        goods_name=goods_name,
+    )
+    await db.commit()
+
+    async with XGJVirtualClient(
+        app_id=settings.XGJ_VIRTUAL_APP_KEY,
+        app_secret=settings.XGJ_VIRTUAL_APP_SECRET,
+        mch_id=settings.XGJ_VIRTUAL_MCH_ID,
+        mch_secret=settings.XGJ_VIRTUAL_MCH_SECRET,
+    ) as client:
+        await client.notify_order_result(notify_url, payload)
+
+    logger.info("XGJ ERP human delivery notified: source_order_no=%s sku=%s", source_order_no, sku.name)
+    return True, "已推送人工处理并回传模板卡密"
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 商品推送通知
 # ══════════════════════════════════════════════════════════════════════
@@ -298,6 +384,13 @@ async def order_push(
         body.get("order_status"),
         body.get("refund_status"),
     )
+    human_result = await _notify_human_order_by_erp_push(db, body=body)
+    if human_result is not None:
+        ok, msg = human_result
+        if ok:
+            return {"result": "success", "msg": msg}
+        return {"result": "fail", "msg": msg}
+
     if int(body.get("order_status") or 0) == 22:
         ok, msg = await _grant_token_uses_by_source_order(
             db,

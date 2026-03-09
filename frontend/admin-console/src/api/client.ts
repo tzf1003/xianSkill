@@ -16,7 +16,25 @@ export interface SKU {
   id: string; skill_id: string; name: string
   price_cents: number; delivery_mode: string; total_uses: number
   enabled: boolean; created_at: string; project_id: string | null
+  push_channel_id: string | null
   delivery_content_template: string | null
+}
+
+export interface PushChannel {
+  id: string
+  name: string
+  provider: string
+  base_url: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PushChannelPayload {
+  name: string
+  provider: 'bark' | string
+  base_url: string
+  enabled?: boolean
 }
 
 export interface Order {
@@ -150,6 +168,22 @@ export const refreshAIProviderModels = (id: string) =>
 export const deleteAIProvider = (id: string) =>
   request<{ deleted: string }>(`${BASE}/ai-providers/${id}`, { method: 'DELETE' })
 
+// ── Push Channels ────────────────────────────────────────────────────
+export const listPushChannels = (limit = 50, offset = 0) =>
+  request<PageResult<PushChannel>>(`${BASE}/push-channels?limit=${limit}&offset=${offset}`)
+
+export const createPushChannel = (body: PushChannelPayload) =>
+  request<PushChannel>(`${BASE}/push-channels`, json('POST', body))
+
+export const updatePushChannel = (id: string, body: Partial<PushChannelPayload>) =>
+  request<PushChannel>(`${BASE}/push-channels/${id}`, json('PUT', body))
+
+export const deletePushChannel = (id: string) =>
+  request<{ deleted: string }>(`${BASE}/push-channels/${id}`, { method: 'DELETE' })
+
+export const testPushChannel = (id: string, body: { title: string; body: string }) =>
+  request<{ success: boolean; provider: string; response: Record<string, unknown> }>(`${BASE}/push-channels/${id}/test`, json('POST', body))
+
 // ── Skills ────────────────────────────────────────────────────────────
 export const listSkills = (limit = 50, offset = 0) =>
   request<PageResult<Skill>>(`${BASE}/skills?limit=${limit}&offset=${offset}`)
@@ -169,7 +203,7 @@ export const listSKUs = (skillId?: string, limit = 50, offset = 0, projectId?: s
   return request<PageResult<SKU>>(`${BASE}/skus?limit=${limit}&offset=${offset}${q ? '&' + q : ''}`)
 }
 
-export const createSKU = (body: { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null; delivery_content_template?: string | null }) =>
+export const createSKU = (body: { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null; push_channel_id?: string | null; delivery_content_template?: string | null }) =>
   request<SKU>(`${BASE}/skus`, json('POST', body))
 
 export const updateSKU = (id: string, body: Partial<SKU>) =>

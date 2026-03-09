@@ -10,12 +10,12 @@
         <thead>
           <tr>
             <th>名称</th><th>Skill ID</th><th>价格（分）</th>
-            <th>赠送次数</th><th>交付模式</th><th>状态</th><th>创建时间</th><th>操作</th>
+            <th>赠送次数</th><th>交付模式</th><th>消息推送</th><th>状态</th><th>创建时间</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="items.length === 0">
-            <td colspan="8" class="empty-row">暂无数据</td>
+            <td colspan="9" class="empty-row">暂无数据</td>
           </tr>
           <tr v-for="s in items" :key="s.id">
             <td><b>{{ s.name }}</b></td>
@@ -23,6 +23,7 @@
             <td>{{ s.price_cents }}</td>
             <td>{{ s.total_uses }}</td>
             <td><span :class="'badge badge-' + s.delivery_mode">{{ deliveryModeLabel(s.delivery_mode) }}</span></td>
+            <td>{{ pushChannelName(s.push_channel_id) }}</td>
             <td><span :class="s.enabled ? 'badge badge-enabled' : 'badge badge-disabled'">{{ s.enabled ? '启用' : '禁用' }}</span></td>
             <td>{{ fmt(s.created_at) }}</td>
             <td><button class="btn btn-secondary btn-sm" @click="openEdit(s)">编辑</button></td>
@@ -72,7 +73,15 @@
             <option value="after_review">好评后赠送</option>
             <option value="human">人工处理</option>
           </select>
-          <small class="field-hint">选择收货后赠送或好评后赠送时，下单会先创建并绑定 token，待闲管家回调后再自动补充赠送次数。</small>
+          <small class="field-hint">选择收货后赠送或好评后赠送时，下单会先创建并绑定 token，待闲管家回调后再自动补充赠送次数。人工处理会在用户提交任务时推送消息。</small>
+        </div>
+        <div v-if="form.delivery_mode === 'human'" class="form-group" style="grid-column:1/-1">
+          <label>消息推送途径 *</label>
+          <select v-model="form.push_channel_id">
+            <option value="">— 选择推送途径 —</option>
+            <option v-for="channel in pushChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
+          </select>
+          <small class="field-hint">人工处理 SKU 必须绑定一个消息推送途径。若未创建，请先前往“消息推送”页面新增 Bark 通道。</small>
         </div>
         <div class="form-group" style="grid-column:1/-1">
           <label>发货内容模板</label>
@@ -95,12 +104,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { listSKUs, createSKU, updateSKU, listSkills as apiListSkills, listProjects, type SKU, type Skill, type Project } from '@/api/client'
+import { listSKUs, createSKU, updateSKU, listSkills as apiListSkills, listProjects, listPushChannels, type PushChannel, type SKU, type Skill, type Project } from '@/api/client'
 import Modal from '@/components/Modal.vue'
 
 const items = ref<SKU[]>([])
 const skills = ref<Skill[]>([])
 const projects = ref<Project[]>([])
+const pushChannels = ref<PushChannel[]>([])
 const total = ref(0)
 const offset = ref(0)
 const page = computed(() => Math.floor(offset.value / 20) + 1)
@@ -111,12 +121,16 @@ const editing = ref<SKU | null>(null)
 const saving = ref(false)
 const err = ref('')
 
-const defaultForm = () => ({ name: '', skill_id: '', project_id: null as string | null, price_cents: 0, total_uses: 1, delivery_mode: 'auto', delivery_content_template: '' })
+const defaultForm = () => ({ name: '', skill_id: '', project_id: null as string | null, price_cents: 0, total_uses: 1, delivery_mode: 'auto', delivery_content_template: '', push_channel_id: '' })
 const form = ref(defaultForm())
 
 async function load() {
-  const [r, s, p] = await Promise.all([listSKUs(undefined, 20, offset.value), apiListSkills(200), listProjects(200)])
-  items.value = r.items; total.value = r.total; skills.value = s.items; projects.value = p.items
+  const [r, s, p, channels] = await Promise.all([listSKUs(undefined, 20, offset.value), apiListSkills(200), listProjects(200), listPushChannels(200)])
+  items.value = r.items
+  total.value = r.total
+  skills.value = s.items
+  projects.value = p.items
+  pushChannels.value = channels.items.filter(channel => channel.enabled)
 }
 
 function openCreate() { editing.value = null; form.value = defaultForm(); err.value = ''; showModal.value = true }
@@ -130,19 +144,30 @@ function openEdit(s: SKU) {
     total_uses: s.total_uses,
     delivery_mode: s.delivery_mode,
     delivery_content_template: s.delivery_content_template ?? '',
+    push_channel_id: s.push_channel_id ?? '',
   }
   err.value = ''; showModal.value = true
 }
 
 async function handleSave() {
   if (!form.value.name.trim() || !form.value.skill_id) { err.value = '名称和 Skill 不能为空'; return }
+  if (form.value.delivery_mode === 'human' && !form.value.push_channel_id) { err.value = '人工处理必须选择消息推送途径'; return }
   saving.value = true; err.value = ''
   try {
-    if (editing.value) await updateSKU(editing.value.id, form.value)
-    else await createSKU(form.value as { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null; delivery_content_template?: string | null })
+    const payload = {
+      ...form.value,
+      push_channel_id: form.value.push_channel_id || null,
+    }
+    if (editing.value) await updateSKU(editing.value.id, payload)
+    else await createSKU(payload as { skill_id: string; name: string; price_cents: number; delivery_mode: string; total_uses: number; project_id?: string | null; push_channel_id?: string | null; delivery_content_template?: string | null })
     showModal.value = false; await load()
   } catch (e: unknown) { err.value = e instanceof Error ? e.message : '操作失败' }
   finally { saving.value = false }
+}
+
+function pushChannelName(pushChannelId: string | null) {
+  if (!pushChannelId) return '—'
+  return pushChannels.value.find(channel => channel.id === pushChannelId)?.name ?? '已删除'
 }
 
 function fmt(iso: string) {

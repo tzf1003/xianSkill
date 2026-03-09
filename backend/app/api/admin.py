@@ -29,6 +29,10 @@ from app.api.schemas import (
     JobOut,
     OrderCreate,
     OrderOut,
+    PushChannelCreate,
+    PushChannelOut,
+    PushChannelTestIn,
+    PushChannelUpdate,
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
@@ -72,6 +76,7 @@ from app.domain.models import (
     JobStatus,
     Order,
     Project,
+    PushChannel,
     SKU,
     Skill,
     SkillType,
@@ -84,8 +89,10 @@ from app.domain.models import (
 )
 from app.infra.xgj.base_client import XGJApiError
 from app.infra.xgj.erp_client import XGJErpClient
+from app.infra.xgj.virtual_client import XGJVirtualClient
 from app.services.ai_provider_service import fetch_remote_models, mask_api_key, normalize_protocol, sanitize_model_entries
 from app.services import job_service, token_service
+from app.services.push_service import extract_xgj_notify_url, send_push_message
 from app.api.admin_routes.xgj_support import sync_xgj_goods as _sync_xgj_goods_from_cloud
 
 # ── 登录路由（无需鉴权）──────────────────────────────────────────────
@@ -128,6 +135,75 @@ def _serialize_ai_provider(provider: AIProvider) -> dict[str, Any]:
         updated_at=provider.updated_at,
     )
     return payload.model_dump(mode="json")
+
+
+def _serialize_push_channel(channel: PushChannel) -> dict[str, Any]:
+    return PushChannelOut.model_validate(channel).model_dump(mode="json")
+
+
+async def _validate_sku_push_channel(
+    db: DbSession,
+    *,
+    delivery_mode: DeliveryMode,
+    push_channel_id: uuid.UUID | None,
+) -> PushChannel | None:
+    channel = None
+    if push_channel_id is not None:
+        channel = await db.get(PushChannel, push_channel_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail="Push channel not found")
+
+    if delivery_mode == DeliveryMode.human:
+        if channel is None:
+            raise HTTPException(status_code=400, detail="人工处理必须选择消息推送途径")
+        if not channel.enabled:
+            raise HTTPException(status_code=400, detail="人工处理必须绑定启用中的消息推送途径")
+
+    return channel
+
+
+async def _find_xgj_order_by_token(db: DbSession, token_id: uuid.UUID) -> XgjOrder | None:
+    stmt = select(XgjOrder).where(XgjOrder.local_token_id == token_id).order_by(XgjOrder.created_at.desc())
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _notify_xgj_human_delivery_success(
+    db: DbSession,
+    *,
+    token_id: uuid.UUID,
+    sku: SKU,
+    download_url: str,
+) -> None:
+    xgj_order = await _find_xgj_order_by_token(db, token_id)
+    notify_url = extract_xgj_notify_url(xgj_order)
+    if not notify_url or xgj_order is None:
+        return
+
+    from app.api.xgj_virtual import _build_card_items, _build_ticket_items, _build_xgj_order_payload
+
+    delivery_info = dict(xgj_order.delivery_info) if isinstance(xgj_order.delivery_info, dict) else {}
+    delivery_content = f"人工处理完成，请下载结果：{download_url}"
+    goods_name = str(delivery_info.get("goods_name") or sku.name)
+    if xgj_order.goods_type == 2:
+        delivery_info["card_items"] = _build_card_items(download_url, delivery_content)
+    elif xgj_order.goods_type == 3:
+        delivery_info["ticket_items"] = _build_ticket_items(download_url, delivery_content, goods_name)
+    else:
+        delivery_info["remark"] = delivery_content
+    delivery_info["delivery_content"] = delivery_content
+    delivery_info["result_file_url"] = download_url
+    xgj_order.delivery_info = delivery_info
+    xgj_order.status = 2
+
+    payload = _build_xgj_order_payload(xgj_order, goods_name)
+    await db.commit()
+    async with XGJVirtualClient(
+        app_id=settings.XGJ_VIRTUAL_APP_KEY,
+        app_secret=settings.XGJ_VIRTUAL_APP_SECRET,
+        mch_id=settings.XGJ_VIRTUAL_MCH_ID,
+        mch_secret=settings.XGJ_VIRTUAL_MCH_SECRET,
+    ) as client:
+        await client.notify_order_result(notify_url, payload)
 
 
 async def _validate_project_ai_binding(
@@ -251,6 +327,88 @@ async def delete_ai_provider(provider_id: uuid.UUID, db: DbSession) -> ApiRespon
     await db.delete(provider)
     await db.commit()
     return ApiResponse(data={"deleted": str(provider_id)})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Push Channels
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/push-channels")
+async def list_push_channels(
+    db: DbSession,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ApiResponse:
+    result = await db.execute(
+        select(PushChannel).order_by(PushChannel.created_at.desc()).limit(limit).offset(offset)
+    )
+    items = result.scalars().all()
+    total = (await db.execute(select(func.count()).select_from(PushChannel))).scalar_one()
+    return ApiResponse(data={
+        "total": total,
+        "items": [_serialize_push_channel(item) for item in items],
+    })
+
+
+@router.post("/push-channels")
+async def create_push_channel(body: PushChannelCreate, db: DbSession) -> ApiResponse:
+    channel = PushChannel(
+        name=body.name,
+        provider=body.provider,
+        base_url=body.base_url.strip(),
+        enabled=body.enabled,
+    )
+    db.add(channel)
+    await db.commit()
+    await db.refresh(channel)
+    return ApiResponse(data=_serialize_push_channel(channel))
+
+
+@router.put("/push-channels/{channel_id}")
+async def update_push_channel(channel_id: uuid.UUID, body: PushChannelUpdate, db: DbSession) -> ApiResponse:
+    channel = await db.get(PushChannel, channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Push channel not found")
+
+    updates = body.model_dump(exclude_unset=True)
+    if "name" in updates:
+        channel.name = updates["name"]
+    if "provider" in updates and updates["provider"] is not None:
+        channel.provider = updates["provider"]
+    if "base_url" in updates and updates["base_url"] is not None:
+        channel.base_url = updates["base_url"].strip()
+    if "enabled" in updates:
+        channel.enabled = updates["enabled"]
+
+    await db.commit()
+    await db.refresh(channel)
+    return ApiResponse(data=_serialize_push_channel(channel))
+
+
+@router.delete("/push-channels/{channel_id}")
+async def delete_push_channel(channel_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    channel = await db.get(PushChannel, channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Push channel not found")
+    await db.delete(channel)
+    await db.commit()
+    return ApiResponse(data={"deleted": str(channel_id)})
+
+
+@router.post("/push-channels/{channel_id}/test")
+async def test_push_channel(channel_id: uuid.UUID, body: PushChannelTestIn, db: DbSession) -> ApiResponse:
+    channel = await db.get(PushChannel, channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Push channel not found")
+    if not channel.enabled:
+        raise HTTPException(status_code=400, detail="Push channel is disabled")
+
+    payload = await send_push_message(channel, title=body.title, body=body.body)
+    return ApiResponse(data={
+        "success": True,
+        "provider": channel.provider,
+        "response": payload,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -479,13 +637,20 @@ async def create_sku(body: SKUCreate, db: DbSession) -> ApiResponse:
     skill = await db.get(Skill, body.skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
+    delivery_mode = DeliveryMode(body.delivery_mode)
+    await _validate_sku_push_channel(
+        db,
+        delivery_mode=delivery_mode,
+        push_channel_id=body.push_channel_id,
+    )
     sku = SKU(
         skill_id=body.skill_id,
         name=body.name,
         price_cents=body.price_cents,
-        delivery_mode=DeliveryMode(body.delivery_mode),
+        delivery_mode=delivery_mode,
         total_uses=body.total_uses,
         delivery_content_template=body.delivery_content_template,
+        push_channel_id=body.push_channel_id,
         human_sla_hours=body.human_sla_hours,
         human_price_cents=body.human_price_cents,
         project_id=body.project_id,
@@ -509,9 +674,16 @@ async def update_sku(sku_id: uuid.UUID, body: SKUUpdate, db: DbSession) -> ApiRe
     sku = await db.get(SKU, sku_id)
     if not sku:
         raise HTTPException(status_code=404, detail="SKU not found")
-    updates = body.model_dump(exclude_none=True)
-    if "delivery_mode" in updates:
-        updates["delivery_mode"] = DeliveryMode(updates["delivery_mode"])
+    updates = body.model_dump(exclude_unset=True)
+    target_delivery_mode = DeliveryMode(updates.get("delivery_mode") or sku.delivery_mode.value)
+    target_push_channel_id = updates.get("push_channel_id", sku.push_channel_id)
+    await _validate_sku_push_channel(
+        db,
+        delivery_mode=target_delivery_mode,
+        push_channel_id=target_push_channel_id,
+    )
+    if "delivery_mode" in updates and updates["delivery_mode"] is not None:
+        updates["delivery_mode"] = target_delivery_mode
     for key, val in updates.items():
         setattr(sku, key, val)
     await db.commit()
@@ -882,6 +1054,20 @@ async def human_deliver(
     )
     await db.commit()
     await db.refresh(job)
+
+    try:
+        token = await db.get(Token, job.token_id)
+        sku = await db.get(SKU, token.sku_id) if token else None
+        if token and sku and sku.delivery_mode == DeliveryMode.human:
+            download_url = storage.presigned_get_url(storage_key)
+            await _notify_xgj_human_delivery_success(
+                db,
+                token_id=token.id,
+                sku=sku,
+                download_url=download_url,
+            )
+    except Exception as exc:
+        logging.getLogger(__name__).warning("xgj human success notify failed: job=%s error=%s", job.id, exc)
 
     return ApiResponse(data=_job_out(job, storage).model_dump(mode="json"))
 

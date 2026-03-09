@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -11,17 +12,79 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.api.schemas import ApiResponse, AssetOut, JobOut, JobSubmit, LatestJobBrief, TokenInfo, SkillOut, ProjectOut, UploadOut
+from app.core.config import settings
 from app.core.deps import DbSession, get_storage
-from app.domain.models import Job, JobStatus, Project, Skill, SKU
+from app.domain.models import Job, JobStatus, Project, PushChannel, Skill, SKU, XgjOrder
 from app.infra.queue import get_queue
 from app.infra.storage import StorageService
+from app.infra.xgj.virtual_client import XGJVirtualClient
 from app.services import job_service, token_service
+from app.services.push_service import HUMAN_PUSH_TITLE, build_human_order_message, extract_xgj_notify_url, send_push_message
 from app.tasks.execute_job import execute_job
 
 router = APIRouter(prefix="/v1/public", tags=["public"])
+logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024   # 20 MB 硬上限
 _COMPRESS_THRESHOLD = 5 * 1024 * 1024   # 超过 5 MB 尝试压缩
+
+
+async def _find_xgj_order_for_token(db: DbSession, token_id) -> XgjOrder | None:
+    stmt = select(XgjOrder).where(XgjOrder.local_token_id == token_id).order_by(XgjOrder.created_at.desc())
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _notify_human_job_created(db: DbSession, *, job: Job, token, sku: SKU) -> None:
+    xgj_order = await _find_xgj_order_for_token(db, token.id)
+    if xgj_order is not None:
+        delivery_info = xgj_order.delivery_info if isinstance(xgj_order.delivery_info, dict) else {}
+        if delivery_info.get("human_erp_notified"):
+            return
+
+    buyer_info = xgj_order.buyer_info if xgj_order and isinstance(xgj_order.buyer_info, dict) else None
+    source_order_no = None
+    if xgj_order is not None:
+        source_order_no = xgj_order.source_order_no or xgj_order.order_no or xgj_order.out_order_no
+
+    if sku.push_channel_id:
+        channel = await db.get(PushChannel, sku.push_channel_id)
+        if channel and channel.enabled:
+            body = build_human_order_message(
+                sku=sku,
+                job_id=str(job.id),
+                token_value=token.token,
+                local_order_id=str(token.order_id),
+                source_order_no=source_order_no,
+                buyer_info=buyer_info,
+                inputs=job.inputs,
+            )
+            try:
+                await send_push_message(channel, title=HUMAN_PUSH_TITLE, body=body)
+            except Exception as exc:
+                logger.warning("human push failed: job=%s channel=%s error=%s", job.id, channel.id, exc)
+
+    notify_url = extract_xgj_notify_url(xgj_order)
+    if not notify_url or xgj_order is None:
+        return
+
+    try:
+        from app.api.xgj_virtual import _build_xgj_order_payload
+
+        xgj_order.status = 0
+        await db.commit()
+        payload = _build_xgj_order_payload(
+            xgj_order,
+            goods_name=str((xgj_order.delivery_info or {}).get("goods_name") or sku.name),
+        )
+        async with XGJVirtualClient(
+            app_id=settings.XGJ_VIRTUAL_APP_KEY,
+            app_secret=settings.XGJ_VIRTUAL_APP_SECRET,
+            mch_id=settings.XGJ_VIRTUAL_MCH_ID,
+            mch_secret=settings.XGJ_VIRTUAL_MCH_SECRET,
+        ) as client:
+            await client.notify_order_result(notify_url, payload)
+    except Exception as exc:
+        logger.warning("xgj human pending notify failed: job=%s order=%s error=%s", job.id, getattr(xgj_order, "id", None), exc)
 
 
 def _compress_image(data: bytes) -> tuple[bytes, str]:
@@ -192,7 +255,9 @@ async def submit_job(
         sku_stmt = select(SKU).where(SKU.id == token.sku_id)
         sku = (await db.execute(sku_stmt)).scalar_one_or_none()
         is_human = sku and sku.delivery_mode.value == "human"
-        if not is_human:
+        if is_human:
+            await _notify_human_job_created(db, job=job, token=token, sku=sku)
+        else:
             get_queue().enqueue(execute_job, str(job.id))
 
     return ApiResponse(data=_job_out(job).model_dump(mode="json"))
