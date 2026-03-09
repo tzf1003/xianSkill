@@ -185,12 +185,12 @@ def test_volcengine_provider_uses_ark_images_generate(monkeypatch: pytest.Monkey
     assert captured["response_format"] == "b64_json"
     assert captured["output_format"] == "png"
     assert captured["watermark"] is False
-    assert captured["size"] == "1024x672"
+    assert captured["size"] == "2048x2048"
     assert isinstance(captured["image"], str)
     assert str(captured["image"]).startswith("data:image/png;base64,")
     assert result.output_image_bytes > 0
     assert result.extra["source"] == "b64_json"
-    assert result.extra["request_size"] == "1024x672"
+    assert result.extra["request_size"] == "2048x2048"
 
 
 def test_volcengine_provider_requires_new_ark_sdk(monkeypatch: pytest.MonkeyPatch):
