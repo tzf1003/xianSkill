@@ -470,6 +470,44 @@ async def test_xgj_goods_list_supports_bound_sku_name_keyword(client: AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_xgj_goods_list_includes_human_delivery_sku(client: AsyncClient, db_session):
+    headers = await _admin_headers(client)
+
+    channel_resp = await client.post(
+        "/v1/admin/push-channels",
+        json={"name": "Bark 通道", "provider": "bark", "base_url": "https://api.day.app/device-key"},
+        headers=headers,
+    )
+    channel_id = channel_resp.json()["data"]["id"]
+
+    skill_resp = await client.post("/v1/admin/skills", json={"name": "人工处理技能", "type": "prompt"}, headers=headers)
+    skill_id = skill_resp.json()["data"]["id"]
+    sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={
+            "skill_id": skill_id,
+            "name": "老照片修复-人工处理",
+            "delivery_mode": "human",
+            "price_cents": 1680,
+            "total_uses": 1,
+            "push_channel_id": channel_id,
+        },
+        headers=headers,
+    )
+    sku_id = sku_resp.json()["data"]["id"]
+
+    resp = await _signed_post(
+        client,
+        "/xgj/open/goofish/goods/list",
+        {"page_no": 1, "page_size": 100, "keyword": "人工处理", "goods_type": 2},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["code"] == 0
+    assert any(item["goods_no"] == f"SKU-{sku_id}" for item in payload["data"]["list"])
+
+
+@pytest.mark.asyncio
 async def test_xgj_virtual_purchase_order_can_use_sku_goods_no(client: AsyncClient, db_session):
     headers = await _admin_headers(client)
 

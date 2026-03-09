@@ -531,6 +531,7 @@ async def goods_list(
         SKU.enabled.is_(True),
         SKU.delivery_mode.in_([
             DeliveryMode.auto,
+            DeliveryMode.human,
             DeliveryMode.after_receipt,
             DeliveryMode.after_review,
         ]),
@@ -545,6 +546,7 @@ async def goods_list(
         SKU.enabled.is_(True),
         SKU.delivery_mode.in_([
             DeliveryMode.auto,
+            DeliveryMode.human,
             DeliveryMode.after_receipt,
             DeliveryMode.after_review,
         ]),
