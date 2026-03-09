@@ -815,6 +815,20 @@ async def _create_order(
                     delivery_info=delivery_info,
                 )
                 db.add(xgj_order)
+                # 同步更新原始订单的 delivery_info，防止 ERP review 推送重复赠送
+                orig_info = dict(original_xgj.delivery_info) if isinstance(original_xgj.delivery_info, dict) else {}
+                orig_info["granted_reward_uses"] = reward_uses
+                if "pending_reward_uses" not in orig_info:
+                    orig_info["pending_reward_uses"] = reward_uses
+                reward_plans = dict(orig_info.get("reward_plans") or {})
+                trigger_key = sku_goods.delivery_mode.value
+                if trigger_key in reward_plans:
+                    plan = dict(reward_plans[trigger_key])
+                    plan["granted_uses"] = plan.get("pending_uses", reward_uses)
+                    reward_plans[trigger_key] = plan
+                    orig_info["reward_plans"] = reward_plans
+                orig_info["grant_trigger"] = trigger_key
+                original_xgj.delivery_info = orig_info
                 await db.commit()
                 logger.info(
                     "XGJ virtual: reward order created order_no=%s sku=%s original=%s uses=+%s token=%s",
