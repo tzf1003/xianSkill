@@ -42,11 +42,13 @@ class VolcengineProvider(BaseProvider):
 
         input_mime = ""
         image_input: str | None = None
+        request_size: str | None = None
         if image_bytes:
             try:
                 img_obj = Image.open(io.BytesIO(image_bytes))
                 fmt = (img_obj.format or "PNG").upper()
                 input_mime = f"image/{fmt.lower()}"
+                request_size = self._derive_request_size(*img_obj.size)
             except Exception:
                 input_mime = "image/png"
 
@@ -54,11 +56,12 @@ class VolcengineProvider(BaseProvider):
             image_input = f"data:{input_mime};base64,{b64}"
 
         logger.info(
-            "Volcengine 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, prompt_len=%d",
+            "Volcengine 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, request_size=%s, prompt_len=%d",
             self.config.model,
             image_bytes is not None,
             input_mime,
             len(image_bytes) if image_bytes else 0,
+            request_size,
             len(prompt),
         )
 
@@ -68,6 +71,7 @@ class VolcengineProvider(BaseProvider):
             prompt=prompt,
             image=image_input,
             response_format="b64_json",
+            size=request_size,
             watermark=False,
             output_format="png",
         )
@@ -118,10 +122,30 @@ class VolcengineProvider(BaseProvider):
             duration_ms=round(duration_ms, 1),
             extra={
                 "input_mime": input_mime,
+                "request_size": request_size,
                 "usage": self._usage_to_dict(usage),
                 "source": "b64_json" if b64_json else "url",
             },
         )
+
+    def _derive_request_size(self, width: int, height: int) -> str:
+        if width <= 0 or height <= 0:
+            return "1024x1024"
+
+        max_edge = 1024
+        min_edge = 256
+        scale = min(max_edge / width, max_edge / height, 1.0)
+
+        scaled_width = max(min_edge, int(round(width * scale)))
+        scaled_height = max(min_edge, int(round(height * scale)))
+
+        scaled_width = self._round_to_step(scaled_width)
+        scaled_height = self._round_to_step(scaled_height)
+        return f"{scaled_width}x{scaled_height}"
+
+    def _round_to_step(self, value: int, step: int = 32) -> int:
+        rounded = int(round(value / step) * step)
+        return max(step, min(1024, rounded))
 
     def _usage_to_dict(self, usage) -> dict:
         if usage is None:

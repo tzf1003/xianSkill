@@ -134,7 +134,7 @@ async def test_admin_can_create_volcengine_ai_provider(client: AsyncClient):
 
 def test_volcengine_provider_uses_ark_images_generate(monkeypatch: pytest.MonkeyPatch):
     raw_image = io.BytesIO()
-    Image.new("RGB", (2, 2), (255, 0, 0)).save(raw_image, format="PNG")
+    Image.new("RGB", (1200, 800), (255, 0, 0)).save(raw_image, format="PNG")
     source_bytes = raw_image.getvalue()
     encoded = base64.b64encode(source_bytes).decode("utf-8")
 
@@ -185,10 +185,12 @@ def test_volcengine_provider_uses_ark_images_generate(monkeypatch: pytest.Monkey
     assert captured["response_format"] == "b64_json"
     assert captured["output_format"] == "png"
     assert captured["watermark"] is False
+    assert captured["size"] == "1024x672"
     assert isinstance(captured["image"], str)
     assert str(captured["image"]).startswith("data:image/png;base64,")
     assert result.output_image_bytes > 0
     assert result.extra["source"] == "b64_json"
+    assert result.extra["request_size"] == "1024x672"
 
 
 def test_volcengine_provider_requires_new_ark_sdk(monkeypatch: pytest.MonkeyPatch):
