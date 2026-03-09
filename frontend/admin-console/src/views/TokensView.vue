@@ -57,6 +57,11 @@
             <td>
               <button
                 v-if="t.status === 'active'"
+                class="btn btn-secondary btn-sm"
+                @click="handleGrantUses(t)"
+              >添加次数</button>
+              <button
+                v-if="t.status === 'active'"
                 class="btn btn-danger btn-sm"
                 @click="handleRevoke(t.id)"
               >撤销</button>
@@ -139,7 +144,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import {
-  listTokens, revokeToken, createToken, listSKUs, listProjects,
+  listTokens, revokeToken, createToken, grantTokenUses, listSKUs, listProjects,
   type Token, type SKU, type Project,
 } from '@/api/client'
 
@@ -171,6 +176,25 @@ async function handleRevoke(id: string) {
   if (!confirm('确认撤销此 Token？撤销后用户将无法继续使用。')) return
   await revokeToken(id)
   await load()
+}
+
+async function handleGrantUses(token: Token) {
+  const value = window.prompt(`请输入要为该 Token 增加的次数。\n当前剩余：${token.remaining}，当前总次数：${token.total_uses}`, '1')
+  if (value === null) return
+
+  const uses = Number.parseInt(value, 10)
+  if (!Number.isInteger(uses) || uses <= 0) {
+    alert('请输入大于 0 的整数次数')
+    return
+  }
+
+  try {
+    await grantTokenUses(token.id, uses)
+    await load()
+    alert(`已成功增加 ${uses} 次`)
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : '添加次数失败，请重试')
+  }
 }
 
 function copy(text: string) {

@@ -276,6 +276,43 @@ async def test_xgj_refund_notify_revokes_local_token(client: AsyncClient, db_ses
 
 
 @pytest.mark.asyncio
+async def test_admin_can_grant_more_uses_to_active_token(client: AsyncClient):
+    headers = await _admin_headers(client)
+
+    skill_resp = await client.post("/v1/admin/skills", json={"name": "增次测试技能", "type": "prompt"}, headers=headers)
+    assert skill_resp.status_code == 200
+    skill_id = skill_resp.json()["data"]["id"]
+
+    sku_resp = await client.post(
+        "/v1/admin/skus",
+        json={"skill_id": skill_id, "name": "增次测试SKU", "delivery_mode": "auto", "total_uses": 2},
+        headers=headers,
+    )
+    assert sku_resp.status_code == 200
+    sku_id = sku_resp.json()["data"]["id"]
+
+    token_resp = await client.post(
+        "/v1/admin/tokens",
+        json={"sku_id": sku_id},
+        headers=headers,
+    )
+    assert token_resp.status_code == 200
+    token_id = token_resp.json()["data"]["id"]
+    assert token_resp.json()["data"]["total_uses"] == 2
+    assert token_resp.json()["data"]["remaining"] == 2
+
+    grant_resp = await client.post(
+        f"/v1/admin/tokens/{token_id}/grant-uses",
+        json={"uses": 3},
+        headers=headers,
+    )
+    assert grant_resp.status_code == 200
+    data = grant_resp.json()["data"]
+    assert data["total_uses"] == 5
+    assert data["remaining"] == 5
+
+
+@pytest.mark.asyncio
 async def test_xgj_ticket_order_uses_sku_delivery_template(client: AsyncClient, db_session):
     headers = await _admin_headers(client)
 

@@ -326,6 +326,10 @@ class TokenCreate(BaseModel):
     channel: str | None = "manual"
 
 
+class TokenGrantUsesIn(BaseModel):
+    uses: int = Field(..., ge=1, description="要增加的次数")
+
+
 class TokenOut(BaseModel):
     id: uuid.UUID
     token: str

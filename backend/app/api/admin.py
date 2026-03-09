@@ -47,6 +47,7 @@ from app.api.schemas import (
     SpecConfigIn,
     StatsOut,
     TokenCreate,
+    TokenGrantUsesIn,
     TokenOut,
     WebhookCreate,
     WebhookOut,
@@ -843,6 +844,36 @@ async def revoke_token(token_id: uuid.UUID, db: DbSession) -> ApiResponse:
     token.status = TokenStatus.revoked
     await db.commit()
     return ApiResponse(data={"id": str(token_id), "status": "revoked"})
+
+
+@router.post("/tokens/{token_id}/grant-uses")
+async def grant_token_uses(token_id: uuid.UUID, body: TokenGrantUsesIn, db: DbSession) -> ApiResponse:
+    """管理员手动给 Token 增加可用次数。"""
+    token = await db.get(Token, token_id)
+    if not token:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if token.status != TokenStatus.active:
+        raise HTTPException(status_code=400, detail="Only active tokens can be granted more uses")
+
+    token_service.grant_uses(token, body.uses)
+    await db.commit()
+    await db.refresh(token)
+
+    out = TokenOut(
+        id=token.id,
+        token=token.token,
+        order_id=token.order_id,
+        sku_id=token.sku_id,
+        skill_id=token.skill_id,
+        status=token.status.value,
+        total_uses=token.total_uses,
+        used_count=token.used_count,
+        reserved_count=token.reserved_count,
+        remaining=token.remaining,
+        expires_at=token.expires_at,
+        created_at=token.created_at,
+    )
+    return ApiResponse(data=out.model_dump(mode="json"))
 
 
 @router.post("/tokens")

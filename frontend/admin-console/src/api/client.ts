@@ -235,6 +235,9 @@ export interface TokenCreate {
 export const createToken = (body: TokenCreate) =>
   request<Token>(`${BASE}/tokens`, json('POST', body))
 
+export const grantTokenUses = (id: string, uses: number) =>
+  request<Token>(`${BASE}/tokens/${id}/grant-uses`, json('POST', { uses }))
+
 // ── Jobs ──────────────────────────────────────────────────────────────
 export const listJobs = (status?: string, skillId?: string, limit = 50, offset = 0) => {
   const q = [
