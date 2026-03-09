@@ -109,6 +109,10 @@ async def _resolve_reward_plan(db, *, xgj_order: XgjOrder, delivery_info: dict, 
             reward_sku = await _find_project_reward_sku(db, base_sku=sku, trigger=trigger)
         if reward_sku is not None:
             reward_plan = _build_reward_plan(reward_sku, xgj_order.quantity)
+            # 如果 delivery_info 已记录赠送，同步到新建的 plan 防止重复赠送
+            already_granted = int(delivery_info.get("granted_reward_uses") or 0)
+            if already_granted > 0:
+                reward_plan["granted_uses"] = min(already_granted, reward_plan["pending_uses"])
             reward_plans[trigger.value] = reward_plan
             delivery_info["reward_plans"] = reward_plans
 
@@ -120,12 +124,16 @@ async def _grant_token_uses_by_source_order(db, *, source_order_no: str, trigger
         logger.warning("XGJ ERP reward skipped: trigger=%s reason=missing_source_order_no", trigger.value)
         return False, "缺少订单号"
 
-    stmt = select(XgjOrder).where(
-        or_(
-            XgjOrder.source_order_no == source_order_no,
-            XgjOrder.order_no == source_order_no,
-            XgjOrder.out_order_no == source_order_no,
+    stmt = (
+        select(XgjOrder)
+        .where(
+            or_(
+                XgjOrder.source_order_no == source_order_no,
+                XgjOrder.order_no == source_order_no,
+                XgjOrder.out_order_no == source_order_no,
+            )
         )
+        .order_by(XgjOrder.created_at.asc())
     )
     xgj_order = (await db.execute(stmt)).scalars().first()
     if not xgj_order:

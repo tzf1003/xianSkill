@@ -766,6 +766,21 @@ async def _create_order(
                 old_info["pending_reward_uses"] = reward_uses
                 old_info["granted_reward_uses"] = reward_uses
                 old_info["grant_trigger"] = sku_goods.delivery_mode.value
+                # 同步更新 reward_plans，防止 ERP 推送走 plan 路径时重复赠送
+                rp = dict(old_info.get("reward_plans") or {})
+                tk = sku_goods.delivery_mode.value
+                if tk in rp:
+                    p = dict(rp[tk])
+                    p["granted_uses"] = p.get("pending_uses", reward_uses)
+                    rp[tk] = p
+                else:
+                    rp[tk] = {
+                        "reward_sku_id": str(sku_goods.id),
+                        "reward_sku_name": sku_goods.name,
+                        "pending_uses": reward_uses,
+                        "granted_uses": reward_uses,
+                    }
+                old_info["reward_plans"] = rp
                 original_xgj.delivery_info = old_info
                 await db.commit()
                 logger.info(
@@ -799,6 +814,15 @@ async def _create_order(
                 delivery_info["pending_reward_uses"] = reward_uses
                 delivery_info["granted_reward_uses"] = reward_uses
                 delivery_info["grant_trigger"] = sku_goods.delivery_mode.value
+                # reward 订单也写入 reward_plans，防止 ERP 推送找到此订单时重建 plan
+                delivery_info["reward_plans"] = {
+                    sku_goods.delivery_mode.value: {
+                        "reward_sku_id": str(sku_goods.id),
+                        "reward_sku_name": sku_goods.name,
+                        "pending_uses": reward_uses,
+                        "granted_uses": reward_uses,
+                    }
+                }
                 xgj_order = XgjOrder(
                     order_no=order_no,
                     out_order_no=out_order_no,
