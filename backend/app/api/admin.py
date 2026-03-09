@@ -15,6 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.schemas import (
+    AIProviderCreate,
+    AIProviderOut,
+    AIProviderUpdate,
     ApiResponse,
     DeliveryRecordOut,
     GoodsCreate,
@@ -53,6 +56,7 @@ from app.core.config import settings
 from app.core.deps import DbSession, create_admin_token, require_admin, get_storage
 from app.core.url_builder import build_token_url, get_frontend_base_url
 from app.domain.models import (
+    AIProvider,
     Asset,
     DeliveryRecord,
     DeliveryMode,
@@ -80,6 +84,7 @@ from app.domain.models import (
 )
 from app.infra.xgj.base_client import XGJApiError
 from app.infra.xgj.erp_client import XGJErpClient
+from app.services.ai_provider_service import fetch_remote_models, mask_api_key, normalize_protocol, sanitize_model_entries
 from app.services import job_service, token_service
 from app.api.admin_routes.xgj_support import sync_xgj_goods as _sync_xgj_goods_from_cloud
 
@@ -106,6 +111,146 @@ router = APIRouter(
     tags=["admin"],
     dependencies=[Depends(require_admin)],
 )
+
+
+def _serialize_ai_provider(provider: AIProvider) -> dict[str, Any]:
+    models = sanitize_model_entries(provider.models or [])
+    payload = AIProviderOut(
+        id=provider.id,
+        name=provider.name,
+        protocol=provider.protocol.value if hasattr(provider.protocol, "value") else str(provider.protocol),
+        base_url=provider.base_url,
+        enabled=provider.enabled,
+        models=models,
+        has_api_key=bool(provider.api_key),
+        api_key_masked=mask_api_key(provider.api_key),
+        created_at=provider.created_at,
+        updated_at=provider.updated_at,
+    )
+    return payload.model_dump(mode="json")
+
+
+async def _validate_project_ai_binding(
+    db: DbSession,
+    *,
+    ai_provider_id: uuid.UUID | None,
+    ai_model: str | None,
+) -> None:
+    model_value = (ai_model or "").strip() or None
+    if ai_provider_id and not model_value:
+        raise HTTPException(status_code=400, detail="选择 AI 服务商后必须同时选择模型")
+    if model_value and not ai_provider_id:
+        raise HTTPException(status_code=400, detail="选择模型前必须先选择 AI 服务商")
+    if not ai_provider_id:
+        return
+
+    provider = await db.get(AIProvider, ai_provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="AI Provider not found")
+    if not provider.enabled:
+        raise HTTPException(status_code=400, detail="所选 AI 服务商已禁用")
+
+    if model_value:
+        saved_ids = {item["id"] for item in sanitize_model_entries(provider.models or [])}
+        if saved_ids and model_value not in saved_ids:
+            raise HTTPException(status_code=400, detail="所选模型不在该服务商已保存的模型列表中")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# AI Providers
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/ai-providers")
+async def list_ai_providers(
+    db: DbSession,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ApiResponse:
+    result = await db.execute(
+        select(AIProvider).order_by(AIProvider.created_at.desc()).limit(limit).offset(offset)
+    )
+    items = result.scalars().all()
+    total = (await db.execute(select(func.count()).select_from(AIProvider))).scalar_one()
+    return ApiResponse(data={
+        "total": total,
+        "items": [_serialize_ai_provider(item) for item in items],
+    })
+
+
+@router.post("/ai-providers")
+async def create_ai_provider(body: AIProviderCreate, db: DbSession) -> ApiResponse:
+    provider = AIProvider(
+        name=body.name,
+        protocol=normalize_protocol(body.protocol),
+        base_url=(body.base_url or "").strip() or None,
+        api_key=(body.api_key or "").strip() or None,
+        enabled=body.enabled,
+        models=sanitize_model_entries([item.model_dump(exclude_none=True) for item in body.models]),
+    )
+    db.add(provider)
+    await db.commit()
+    await db.refresh(provider)
+    return ApiResponse(data=_serialize_ai_provider(provider))
+
+
+@router.get("/ai-providers/{provider_id}")
+async def get_ai_provider(provider_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    provider = await db.get(AIProvider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="AI Provider not found")
+    return ApiResponse(data=_serialize_ai_provider(provider))
+
+
+@router.patch("/ai-providers/{provider_id}")
+async def update_ai_provider(provider_id: uuid.UUID, body: AIProviderUpdate, db: DbSession) -> ApiResponse:
+    provider = await db.get(AIProvider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="AI Provider not found")
+
+    updates = body.model_dump(exclude_unset=True)
+    if "name" in updates:
+        provider.name = updates["name"]
+    if "protocol" in updates and updates["protocol"] is not None:
+        provider.protocol = normalize_protocol(updates["protocol"])
+    if "base_url" in updates:
+        provider.base_url = (updates["base_url"] or "").strip() or None
+    if "api_key" in updates:
+        provider.api_key = (updates["api_key"] or "").strip() or None
+    if "enabled" in updates:
+        provider.enabled = updates["enabled"]
+    if "models" in updates and updates["models"] is not None:
+        provider.models = sanitize_model_entries(updates["models"])
+
+    await db.commit()
+    await db.refresh(provider)
+    return ApiResponse(data=_serialize_ai_provider(provider))
+
+
+@router.post("/ai-providers/{provider_id}/refresh-models")
+async def refresh_ai_provider_models(provider_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    provider = await db.get(AIProvider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="AI Provider not found")
+
+    models = await fetch_remote_models(
+        protocol=provider.protocol,
+        base_url=provider.base_url,
+        api_key=provider.api_key or "",
+    )
+    provider.models = models
+    await db.commit()
+    await db.refresh(provider)
+    return ApiResponse(data=_serialize_ai_provider(provider))
+
+
+@router.delete("/ai-providers/{provider_id}")
+async def delete_ai_provider(provider_id: uuid.UUID, db: DbSession) -> ApiResponse:
+    provider = await db.get(AIProvider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="AI Provider not found")
+    await db.delete(provider)
+    await db.commit()
+    return ApiResponse(data={"deleted": str(provider_id)})
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -165,6 +310,7 @@ async def create_project(body: ProjectCreate, db: DbSession) -> ApiResponse:
     existing = (await db.execute(select(Project).where(Project.slug == body.slug))).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail=f"Slug '{body.slug}' already exists")
+    await _validate_project_ai_binding(db, ai_provider_id=body.ai_provider_id, ai_model=body.ai_model)
     project = Project(
         name=body.name,
         slug=body.slug,
@@ -173,6 +319,8 @@ async def create_project(body: ProjectCreate, db: DbSession) -> ApiResponse:
         type=body.type,
         options=body.options.model_dump(exclude_none=True) if body.options else None,
         skill_id=body.skill_id,
+        ai_provider_id=body.ai_provider_id,
+        ai_model=(body.ai_model or "").strip() or None,
     )
     db.add(project)
     await db.commit()
@@ -193,9 +341,21 @@ async def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: DbSessi
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    effective_provider_id = updates.get("ai_provider_id", project.ai_provider_id)
+    effective_model = updates.get("ai_model", project.ai_model)
+    if "ai_provider_id" in updates and updates["ai_provider_id"] is None and "ai_model" not in updates:
+        effective_model = None
+    await _validate_project_ai_binding(
+        db,
+        ai_provider_id=effective_provider_id,
+        ai_model=effective_model,
+    )
+    for field, value in updates.items():
         if field == "options" and isinstance(value, BaseModel):
             value = value.model_dump(exclude_none=True)
+        if field == "ai_model":
+            value = (value or "").strip() or None
         setattr(project, field, value)
     await db.commit()
     await db.refresh(project)

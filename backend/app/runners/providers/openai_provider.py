@@ -17,8 +17,8 @@ import time
 
 from PIL import Image
 
-from app.core.config import settings
 from app.runners.base import BaseProvider, ProviderResult
+from app.services.ai_provider_service import AIRuntimeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,11 @@ logger = logging.getLogger(__name__)
 class OpenAIProvider(BaseProvider):
     """使用 OpenAI / OpenAI-Compatible API 处理图像。"""
 
+    def __init__(self, config: AIRuntimeConfig):
+        self.config = config
+
     def complete(self, prompt: str, image_bytes: bytes | None = None) -> ProviderResult:
-        if not settings.OPENAI_API_KEY:
+        if not self.config.api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY 未配置，请在 .env 中设置 OPENAI_API_KEY"
             )
@@ -40,8 +43,8 @@ class OpenAIProvider(BaseProvider):
             ) from exc
 
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_BASE_URL or None,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url or None,
             timeout=600.0,
         )
 
@@ -78,7 +81,7 @@ class OpenAIProvider(BaseProvider):
         logger.info(
             "OpenAI 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, "
             "prompt_len=%d\n--- PROMPT ---\n%s\n--- END PROMPT ---",
-            settings.OPENAI_IMAGE_MODEL,
+            self.config.model,
             image_bytes is not None,
             input_mime,
             len(image_bytes) if image_bytes else 0,
@@ -88,7 +91,7 @@ class OpenAIProvider(BaseProvider):
 
         t0 = time.perf_counter()
         stream = client.chat.completions.create(
-            model=settings.OPENAI_IMAGE_MODEL,
+            model=self.config.model,
             messages=[{"role": "user", "content": content}],
             stream=True,
             stream_options={"include_usage": True},
@@ -142,7 +145,7 @@ class OpenAIProvider(BaseProvider):
                         )
                         return ProviderResult(
                             image_bytes=png_bytes,
-                            model=settings.OPENAI_IMAGE_MODEL,
+                            model=self.config.model,
                             finish_reason=finish_reason,
                             response_text="",
                             image_mime="image/png",
@@ -159,13 +162,13 @@ class OpenAIProvider(BaseProvider):
         text_preview = msg_content if isinstance(msg_content, str) else str(msg_content)
         logger.error(
             "OpenAI 未返回图像！model=%s, finish_reason=%s, duration=%.0f ms, 文本响应: %s",
-            settings.OPENAI_IMAGE_MODEL,
+            self.config.model,
             finish_reason,
             duration_ms,
             text_preview[:300],
         )
         raise RuntimeError(
-            f"OpenAI 未返回图像数据（model={settings.OPENAI_IMAGE_MODEL}, "
+            f"OpenAI 未返回图像数据（model={self.config.model}, "
             f"finish_reason={finish_reason}）。"
             f"文本响应: {text_preview[:200]}"
         )

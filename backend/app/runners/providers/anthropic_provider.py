@@ -17,8 +17,8 @@ import time
 
 from PIL import Image
 
-from app.core.config import settings
 from app.runners.base import BaseProvider, ProviderResult
+from app.services.ai_provider_service import AIRuntimeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,11 @@ logger = logging.getLogger(__name__)
 class AnthropicProvider(BaseProvider):
     """使用 Anthropic / Anthropic-Compatible API 处理图像。"""
 
+    def __init__(self, config: AIRuntimeConfig):
+        self.config = config
+
     def complete(self, prompt: str, image_bytes: bytes | None = None) -> ProviderResult:
-        if not settings.ANTHROPIC_API_KEY:
+        if not self.config.api_key:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY 未配置，请在 .env 中设置 ANTHROPIC_API_KEY"
             )
@@ -39,9 +42,9 @@ class AnthropicProvider(BaseProvider):
                 "anthropic 未安装，请执行: pip install anthropic"
             ) from exc
 
-        client_kwargs: dict = {"api_key": settings.ANTHROPIC_API_KEY}
-        if settings.ANTHROPIC_BASE_URL:
-            client_kwargs["base_url"] = settings.ANTHROPIC_BASE_URL
+        client_kwargs: dict = {"api_key": self.config.api_key}
+        if self.config.base_url:
+            client_kwargs["base_url"] = self.config.base_url
 
         client = anthropic.Anthropic(**client_kwargs)
 
@@ -71,7 +74,7 @@ class AnthropicProvider(BaseProvider):
         logger.info(
             "Anthropic 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, "
             "prompt_len=%d\n--- PROMPT ---\n%s\n--- END PROMPT ---",
-            settings.ANTHROPIC_IMAGE_MODEL,
+            self.config.model,
             image_bytes is not None,
             input_mime,
             len(image_bytes) if image_bytes else 0,
@@ -81,7 +84,7 @@ class AnthropicProvider(BaseProvider):
 
         t0 = time.perf_counter()
         response = client.messages.create(
-            model=settings.ANTHROPIC_IMAGE_MODEL,
+            model=self.config.model,
             max_tokens=4096,
             messages=[{"role": "user", "content": content}],
         )
@@ -109,7 +112,7 @@ class AnthropicProvider(BaseProvider):
                     )
                     return ProviderResult(
                         image_bytes=png_bytes,
-                        model=settings.ANTHROPIC_IMAGE_MODEL,
+                        model=self.config.model,
                         finish_reason=finish_reason,
                         response_text="",
                         image_mime="image/png",
@@ -126,13 +129,13 @@ class AnthropicProvider(BaseProvider):
         text_preview = " | ".join(text_parts)[:300]
         logger.error(
             "Anthropic 未返回图像！model=%s, finish_reason=%s, duration=%.0f ms, 文本响应: %s",
-            settings.ANTHROPIC_IMAGE_MODEL,
+            self.config.model,
             finish_reason,
             duration_ms,
             text_preview,
         )
         raise RuntimeError(
-            f"Anthropic 未返回图像数据（model={settings.ANTHROPIC_IMAGE_MODEL}, "
+            f"Anthropic 未返回图像数据（model={self.config.model}, "
             f"finish_reason={finish_reason}）。"
             f"文本响应: {text_preview[:200]}"
         )

@@ -14,8 +14,8 @@ import time
 
 from PIL import Image
 
-from app.core.config import settings
 from app.runners.base import BaseProvider, ProviderResult
+from app.services.ai_provider_service import AIRuntimeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +23,11 @@ logger = logging.getLogger(__name__)
 class GeminiProvider(BaseProvider):
     """使用 Google Gemini API（google-genai SDK）处理图像。"""
 
+    def __init__(self, config: AIRuntimeConfig):
+        self.config = config
+
     def complete(self, prompt: str, image_bytes: bytes | None = None) -> ProviderResult:
-        if not settings.GEMINI_API_KEY:
+        if not self.config.api_key:
             raise RuntimeError(
                 "GEMINI_API_KEY 未配置，请在 .env 中设置 GEMINI_API_KEY"
             )
@@ -38,9 +41,9 @@ class GeminiProvider(BaseProvider):
                 "google-genai 未安装，请执行: pip install google-genai"
             ) from exc
 
-        http_options = types.HttpOptions(base_url=settings.GEMINI_BASE_URL) if settings.GEMINI_BASE_URL else None
+        http_options = types.HttpOptions(base_url=self.config.base_url) if self.config.base_url else None
         client = genai.Client(
-            api_key=settings.GEMINI_API_KEY,
+            api_key=self.config.api_key,
             http_options=http_options,
         )
 
@@ -65,7 +68,7 @@ class GeminiProvider(BaseProvider):
         logger.info(
             "Gemini 请求: model=%s, has_image=%s, input_mime=%s, input_size=%d bytes, "
             "prompt_len=%d\n--- PROMPT ---\n%s\n--- END PROMPT ---",
-            settings.GEMINI_IMAGE_MODEL,
+            self.config.model,
             image_bytes is not None,
             input_mime,
             len(image_bytes) if image_bytes else 0,
@@ -75,7 +78,7 @@ class GeminiProvider(BaseProvider):
 
         t0 = time.perf_counter()
         response = client.models.generate_content(
-            model=settings.GEMINI_IMAGE_MODEL,
+            model=self.config.model,
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
@@ -89,7 +92,7 @@ class GeminiProvider(BaseProvider):
             feedback = getattr(response, "prompt_feedback", None)
             block_reason = getattr(feedback, "block_reason", None) if feedback else None
             raise RuntimeError(
-                f"Gemini 返回空 candidates（model={settings.GEMINI_IMAGE_MODEL}）。"
+                f"Gemini 返回空 candidates（model={self.config.model}）。"
                 f"可能被安全策略屏蔽，block_reason={block_reason}"
             )
 
@@ -100,14 +103,14 @@ class GeminiProvider(BaseProvider):
         # finish_reason: SAFETY / RECITATION / OTHER 表示被拒绝
         if finish_reason and finish_reason_str not in ("FinishReason.STOP", "STOP", "1"):
             raise RuntimeError(
-                f"Gemini 终止原因异常: finish_reason={finish_reason}（model={settings.GEMINI_IMAGE_MODEL}）。"
+                f"Gemini 终止原因异常: finish_reason={finish_reason}（model={self.config.model}）。"
                 f"请检查图片内容或 prompt 是否触发了安全策略"
             )
 
         # content 可能为 None（safety block 时）
         if candidate.content is None or not candidate.content.parts:
             raise RuntimeError(
-                f"Gemini 返回空 content（model={settings.GEMINI_IMAGE_MODEL}, "
+                f"Gemini 返回空 content（model={self.config.model}, "
                 f"finish_reason={finish_reason}）"
             )
 
@@ -133,7 +136,7 @@ class GeminiProvider(BaseProvider):
                 )
                 return ProviderResult(
                     image_bytes=png_bytes,
-                    model=settings.GEMINI_IMAGE_MODEL,
+                    model=self.config.model,
                     finish_reason=finish_reason_str,
                     response_text="",
                     image_mime="image/png",
@@ -150,13 +153,13 @@ class GeminiProvider(BaseProvider):
         text_preview = " | ".join(text_parts)[:300]
         logger.error(
             "Gemini 未返回图像！model=%s, finish_reason=%s, duration=%.0f ms, 文本响应: %s",
-            settings.GEMINI_IMAGE_MODEL,
+            self.config.model,
             finish_reason,
             duration_ms,
             text_preview,
         )
         raise RuntimeError(
-            f"Gemini 未返回图像数据（model={settings.GEMINI_IMAGE_MODEL}, "
+            f"Gemini 未返回图像数据（model={self.config.model}, "
             f"finish_reason={finish_reason}）。"
             f"Gemini 文字响应: {text_preview[:200]}"
         )

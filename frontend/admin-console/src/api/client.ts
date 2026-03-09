@@ -53,6 +53,33 @@ export interface Stats {
 
 export interface PageResult<T> { total: number; items: T[] }
 
+export interface AIModelItem {
+  id: string
+  label?: string | null
+}
+
+export interface AIProvider {
+  id: string
+  name: string
+  protocol: string
+  base_url: string | null
+  enabled: boolean
+  models: AIModelItem[]
+  has_api_key: boolean
+  api_key_masked: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AIProviderPayload {
+  name: string
+  protocol: 'openai' | 'anthropic' | 'gemini' | 'volcengine' | string
+  base_url?: string
+  api_key?: string
+  enabled?: boolean
+  models?: AIModelItem[]
+}
+
 // ── 请求工具 ─────────────────────────────────────────────────────────
 const TOKEN_KEY = 'admin_token'
 
@@ -106,6 +133,22 @@ export function logout(): void {
 
 // ── Stats ─────────────────────────────────────────────────────────────
 export const getStats = () => request<Stats>(`${BASE}/stats`)
+
+// ── AI Providers ─────────────────────────────────────────────────────
+export const listAIProviders = (limit = 50, offset = 0) =>
+  request<PageResult<AIProvider>>(`${BASE}/ai-providers?limit=${limit}&offset=${offset}`)
+
+export const createAIProvider = (body: AIProviderPayload) =>
+  request<AIProvider>(`${BASE}/ai-providers`, json('POST', body))
+
+export const updateAIProvider = (id: string, body: Partial<AIProviderPayload>) =>
+  request<AIProvider>(`${BASE}/ai-providers/${id}`, json('PATCH', body))
+
+export const refreshAIProviderModels = (id: string) =>
+  request<AIProvider>(`${BASE}/ai-providers/${id}/refresh-models`, { method: 'POST' })
+
+export const deleteAIProvider = (id: string) =>
+  request<{ deleted: string }>(`${BASE}/ai-providers/${id}`, { method: 'DELETE' })
 
 // ── Skills ────────────────────────────────────────────────────────────
 export const listSkills = (limit = 50, offset = 0) =>
@@ -186,6 +229,8 @@ export interface Project {
   options: Record<string, unknown> | null
   enabled: boolean
   skill_id: string | null
+  ai_provider_id: string | null
+  ai_model: string | null
   created_at: string
 }
 
@@ -198,6 +243,8 @@ export interface ProjectCreate {
   options?: Record<string, unknown>
   enabled?: boolean
   skill_id?: string | null
+  ai_provider_id?: string | null
+  ai_model?: string | null
 }
 
 export const listProjects = (limit = 50, offset = 0) =>

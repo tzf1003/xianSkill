@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.runners.base import BaseRunner, RunResult
+from app.services.ai_provider_service import AIRuntimeConfig, current_env_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -31,36 +32,37 @@ def _entry(step: str, **kwargs) -> dict:
     return {"ts": _now(), "step": step, **kwargs}
 
 
-def _make_provider():
-    """根据 AI_API_FORMAT 配置选择 Provider，API Key 未配置时降级至 Mock。"""
-    fmt = (settings.AI_API_FORMAT or "gemini").lower()
+def _make_provider(ai_config: AIRuntimeConfig | None = None):
+    """根据运行时配置选择 Provider；项目显式配置缺失时直接报错，env 缺失时降级 Mock。"""
+    config = ai_config or current_env_runtime_config()
+    protocol = (config.protocol or "gemini").lower()
+    key = (config.api_key or "").strip()
 
-    if fmt == "openai":
-        key = settings.OPENAI_API_KEY
-        if key and key not in ("", "your-openai-api-key-here"):
-            from app.runners.providers.openai_provider import OpenAIProvider
-            logger.info("Provider: OpenAIProvider (model=%s)", settings.OPENAI_IMAGE_MODEL)
-            return OpenAIProvider()
-        logger.warning("OPENAI_API_KEY 未配置，降级使用 MockProvider")
+    if not key or key.startswith("your-"):
+        if ai_config is not None:
+            raise RuntimeError("项目绑定的 AI 服务商缺少有效 API Key")
+        logger.warning("%s API Key 未配置，降级使用 MockProvider", protocol.upper())
+        from app.runners.providers.mock import MockProvider
+        return MockProvider(), config
 
-    elif fmt == "anthropic":
-        key = settings.ANTHROPIC_API_KEY
-        if key and key not in ("", "your-anthropic-api-key-here"):
-            from app.runners.providers.anthropic_provider import AnthropicProvider
-            logger.info("Provider: AnthropicProvider (model=%s)", settings.ANTHROPIC_IMAGE_MODEL)
-            return AnthropicProvider()
-        logger.warning("ANTHROPIC_API_KEY 未配置，降级使用 MockProvider")
+    if protocol == "openai":
+        from app.runners.providers.openai_provider import OpenAIProvider
+        logger.info("Provider: OpenAIProvider (model=%s)", config.model)
+        return OpenAIProvider(config), config
 
-    else:  # gemini（默认）
-        key = settings.GEMINI_API_KEY
-        if key and key not in ("", "your-gemini-api-key-here"):
-            from app.runners.providers.gemini import GeminiProvider
-            logger.info("Provider: GeminiProvider (model=%s)", settings.GEMINI_IMAGE_MODEL)
-            return GeminiProvider()
-        logger.warning("GEMINI_API_KEY 未配置，降级使用 MockProvider")
+    if protocol == "anthropic":
+        from app.runners.providers.anthropic_provider import AnthropicProvider
+        logger.info("Provider: AnthropicProvider (model=%s)", config.model)
+        return AnthropicProvider(config), config
 
-    from app.runners.providers.mock import MockProvider
-    return MockProvider()
+    if protocol == "volcengine":
+        from app.runners.providers.volcengine_provider import VolcengineProvider
+        logger.info("Provider: VolcengineProvider (model=%s)", config.model)
+        return VolcengineProvider(config), config
+
+    from app.runners.providers.gemini import GeminiProvider
+    logger.info("Provider: GeminiProvider (model=%s)", config.model)
+    return GeminiProvider(config), config
 
 
 class PromptRunner(BaseRunner):
@@ -76,12 +78,18 @@ class PromptRunner(BaseRunner):
 
         prompt = skill.get("prompt_template") or "Restore and enhance this image."
         image_key: str | None = inputs.get("image_key")
+        ai_config_dict = skill.get("ai_config") or None
+        ai_config = AIRuntimeConfig.from_dict(ai_config_dict) if ai_config_dict else None
+        _, resolved_ai = _make_provider(ai_config)
 
         # ── 记录：运行开始 ────────────────────────────────────────────
         logs.append(_entry(
             "runner_start",
             job_id=job_id,
-            api_format=settings.AI_API_FORMAT,
+            api_format=resolved_ai.protocol,
+            ai_source=resolved_ai.source,
+            ai_provider=resolved_ai.provider_name,
+            ai_model=resolved_ai.model,
             image_key=image_key,
             prompt_len=len(prompt),
         ))
@@ -124,13 +132,14 @@ class PromptRunner(BaseRunner):
             logs.append(_entry("download_skip", reason="no image_key in inputs"))
 
         # ── 2. 调用 Provider 处理图像 ─────────────────────────────────
-        provider = _make_provider()
+        provider, resolved_ai = _make_provider(ai_config)
         provider_name = type(provider).__name__
 
         logs.append(_entry(
             "llm_request",
             provider=provider_name,
-            model=getattr(settings, "GEMINI_IMAGE_MODEL", "mock"),
+            model=resolved_ai.model,
+            protocol=resolved_ai.protocol,
             prompt_len=len(prompt),
             input_image_bytes=len(image_bytes) if image_bytes else 0,
         ))
@@ -201,7 +210,9 @@ class PromptRunner(BaseRunner):
                 "prompt_used": prompt[:120],
                 "provider": provider_name,
                 "model": provider_result.model,
-                "gemini_image_model": settings.GEMINI_IMAGE_MODEL if settings.GEMINI_API_KEY else None,
+                "ai_protocol": resolved_ai.protocol,
+                "ai_provider": resolved_ai.provider_name,
+                "ai_source": resolved_ai.source,
                 "llm_duration_ms": provider_result.duration_ms,
                 "total_duration_ms": total_ms,
             },

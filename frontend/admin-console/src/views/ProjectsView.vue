@@ -15,7 +15,7 @@
         <table v-else class="data-table">
           <thead>
             <tr>
-              <th>名称</th><th>Slug</th><th>类型</th><th>绑定 Skill</th><th>状态</th><th>创建时间</th><th>操作</th>
+              <th>名称</th><th>Slug</th><th>类型</th><th>绑定 Skill</th><th>AI 接入</th><th>状态</th><th>创建时间</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -35,6 +35,12 @@
                 <span v-else class="badge-none">未绑定</span>
               </td>
               <td>
+                <span v-if="p.ai_provider_id && p.ai_model" class="badge-skill">
+                  {{ aiProviders.find(item => item.id === p.ai_provider_id)?.name ?? '已删除服务商' }} / {{ p.ai_model }}
+                </span>
+                <span v-else class="badge-none">默认 env</span>
+              </td>
+              <td>
                 <span :class="p.enabled ? 'badge-on' : 'badge-off'">{{ p.enabled ? '启用' : '禁用' }}</span>
               </td>
               <td class="td-date">{{ fmtDate(p.created_at) }}</td>
@@ -44,7 +50,7 @@
               </td>
             </tr>
             <tr v-if="!loading && !projects.length">
-              <td colspan="6" class="td-empty">暂无项目，点击「新建项目」开始</td>
+              <td colspan="8" class="td-empty">暂无项目，点击「新建项目」开始</td>
             </tr>
           </tbody>
         </table>
@@ -81,6 +87,58 @@
             <option :value="null">— 不绑定 —</option>
             <option v-for="s in skills" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
+
+          <label class="field-label">AI 服务商 <span class="hint">&#40;为空则沿用后端 env 默认配置&#41;</span></label>
+          <select v-model="form.ai_provider_id" class="field-input">
+            <option :value="null">— 使用默认 env —</option>
+            <option v-for="item in aiProviders" :key="item.id" :value="item.id">
+              {{ item.name }} · {{ item.protocol }}
+            </option>
+          </select>
+
+          <label class="field-label">AI 模型 <span class="hint">&#40;可输入关键字筛选，点击候选项回填&#41;</span></label>
+          <div ref="aiModelPickerRef" class="model-picker" :class="{ disabled: !form.ai_provider_id || currentProviderModels.length === 0 }">
+            <div class="model-input-wrap">
+              <input
+                :value="aiModelSearch"
+                class="field-input model-input"
+                :disabled="!form.ai_provider_id || currentProviderModels.length === 0"
+                :placeholder="!form.ai_provider_id ? '请先选择服务商' : (currentProviderModels.length ? '输入模型名或关键字筛选' : '该服务商暂无已保存模型')"
+                @focus="openAiModelPicker"
+                @input="handleAiModelInput(($event.target as HTMLInputElement).value)"
+                @keydown.esc="aiModelPickerOpen = false"
+              />
+              <button
+                v-if="aiModelSearch"
+                type="button"
+                class="model-clear"
+                @click="clearAiModelSelection"
+              >
+                清空
+              </button>
+            </div>
+            <div v-if="aiModelPickerOpen && form.ai_provider_id" class="model-dropdown">
+              <div v-if="currentProviderModels.length === 0" class="model-empty">该服务商暂无已保存模型</div>
+              <template v-else-if="visibleProviderModels.length">
+                <button
+                  v-for="item in visibleProviderModels"
+                  :key="item.id"
+                  type="button"
+                  class="model-option"
+                  :class="{ active: form.ai_model === item.id }"
+                  @click="selectAiModel(item.id)"
+                >
+                  <span class="model-option-id">{{ item.id }}</span>
+                  <span v-if="item.label && item.label !== item.id" class="model-option-label">{{ item.label }}</span>
+                </button>
+                <div v-if="filteredProviderModels.length > MODEL_OPTION_LIMIT" class="model-empty model-more">
+                  匹配结果较多，当前仅展示前 {{ MODEL_OPTION_LIMIT }} 项，请继续输入缩小范围。
+                </div>
+              </template>
+              <div v-else class="model-empty">没有匹配的模型，请调整关键字。</div>
+            </div>
+          </div>
+          <div v-if="form.ai_model" class="model-selected">当前已选：{{ form.ai_model }}</div>
 
           <label class="field-label">启用</label>
           <div class="toggle-row" @click="form.enabled = !form.enabled">
@@ -212,8 +270,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { listProjects, createProject, updateProject, deleteProject, listSkills, type Project, type Skill } from '@/api/client'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { listProjects, createProject, updateProject, deleteProject, listSkills, listAIProviders, type AIProvider, type Project, type Skill } from '@/api/client'
 
 // ── 项目类型枚举（后期拓展在此追加）────────────────────────────
 const PROJECT_TYPES = [
@@ -301,6 +359,7 @@ function serializeOptions(groups: OptionGroup[]): Record<string, unknown> | unde
 // ── 响应式状态 ───────────────────────────────────────────────
 const projects = ref<Project[]>([])
 const skills = ref<Skill[]>([])
+const aiProviders = ref<AIProvider[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const deleting = ref(false)
@@ -314,17 +373,62 @@ const form = ref({
   name: '', slug: '', description: '', cover_url: '',
   type: 'image_processing', enabled: true,
   skill_id: null as string | null,
+  ai_provider_id: null as string | null,
+  ai_model: null as string | null,
   option_groups: [] as OptionGroup[],
 })
 
-onMounted(load)
+const MODEL_OPTION_LIMIT = 50
+const aiModelSearch = ref('')
+const aiModelPickerOpen = ref(false)
+const aiModelPickerRef = ref<HTMLElement | null>(null)
+
+const currentProvider = computed(() => aiProviders.value.find(item => item.id === form.value.ai_provider_id) ?? null)
+const currentProviderModels = computed(() => currentProvider.value?.models ?? [])
+const filteredProviderModels = computed(() => {
+  const keyword = aiModelSearch.value.trim().toLowerCase()
+  if (!keyword) return currentProviderModels.value
+  return currentProviderModels.value.filter(item => {
+    const label = (item.label ?? '').toLowerCase()
+    return item.id.toLowerCase().includes(keyword) || label.includes(keyword)
+  })
+})
+const visibleProviderModels = computed(() => filteredProviderModels.value.slice(0, MODEL_OPTION_LIMIT))
+
+watch(() => form.value.ai_provider_id, (next, prev) => {
+  if (!next) {
+    form.value.ai_model = null
+    aiModelSearch.value = ''
+    aiModelPickerOpen.value = false
+    return
+  }
+  if (next !== prev) {
+    const validIds = new Set((currentProvider.value?.models ?? []).map(item => item.id))
+    if (!form.value.ai_model || !validIds.has(form.value.ai_model)) {
+      form.value.ai_model = null
+      aiModelSearch.value = ''
+    } else {
+      aiModelSearch.value = form.value.ai_model
+    }
+  }
+})
+
+onMounted(() => {
+  void load()
+  document.addEventListener('click', handleDocumentClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick)
+})
 
 async function load() {
   loading.value = true
   try {
-    const [pr, sk] = await Promise.all([listProjects(), listSkills()])
+    const [pr, sk, ai] = await Promise.all([listProjects(), listSkills(), listAIProviders()])
     projects.value = pr.items
     skills.value = sk.items
+    aiProviders.value = ai.items.filter(item => item.enabled)
   }
   catch { /* ignore */ }
   finally { loading.value = false }
@@ -332,7 +436,9 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  form.value = { name: '', slug: '', description: '', cover_url: '', type: 'image_processing', enabled: true, skill_id: null, option_groups: [] }
+  form.value = { name: '', slug: '', description: '', cover_url: '', type: 'image_processing', enabled: true, skill_id: null, ai_provider_id: null, ai_model: null, option_groups: [] }
+  aiModelSearch.value = ''
+  aiModelPickerOpen.value = false
   saveError.value = ''
   modal.value = 'create'
 }
@@ -347,10 +453,54 @@ function openEdit(p: Project) {
     type: p.type,
     enabled: p.enabled,
     skill_id: p.skill_id ?? null,
+    ai_provider_id: p.ai_provider_id ?? null,
+    ai_model: p.ai_model ?? null,
     option_groups: parseOptions(p.options),
   }
+  aiModelSearch.value = p.ai_model ?? ''
+  aiModelPickerOpen.value = false
   saveError.value = ''
   modal.value = 'edit'
+}
+
+function openAiModelPicker() {
+  if (!form.value.ai_provider_id || currentProviderModels.value.length === 0) return
+  aiModelPickerOpen.value = true
+}
+
+function handleAiModelInput(value: string) {
+  aiModelSearch.value = value
+  aiModelPickerOpen.value = true
+  const keyword = value.trim().toLowerCase()
+  if (!keyword) {
+    form.value.ai_model = null
+    return
+  }
+  const exact = currentProviderModels.value.find(item => {
+    const label = (item.label ?? '').toLowerCase()
+    return item.id.toLowerCase() === keyword || label === keyword
+  })
+  form.value.ai_model = exact?.id ?? null
+}
+
+function selectAiModel(modelId: string) {
+  form.value.ai_model = modelId
+  aiModelSearch.value = modelId
+  aiModelPickerOpen.value = false
+}
+
+function clearAiModelSelection() {
+  aiModelSearch.value = ''
+  form.value.ai_model = null
+  aiModelPickerOpen.value = Boolean(form.value.ai_provider_id && currentProviderModels.value.length)
+}
+
+function handleDocumentClick(event: MouseEvent) {
+  const target = event.target as Node | null
+  if (!target || !aiModelPickerRef.value) return
+  if (!aiModelPickerRef.value.contains(target)) {
+    aiModelPickerOpen.value = false
+  }
 }
 
 async function save() {
@@ -365,6 +515,8 @@ async function save() {
       type: form.value.type,
       enabled: form.value.enabled,
       skill_id: form.value.skill_id || null,
+      ai_provider_id: form.value.ai_provider_id || null,
+      ai_model: form.value.ai_provider_id ? (form.value.ai_model || null) : null,
       options: serializeOptions(form.value.option_groups),
     }
     if (isEdit.value) await updateProject(editingId.value, body)
@@ -448,6 +600,19 @@ function fmtDate(s: string) { return new Date(s).toLocaleDateString('zh-CN') }
 .field-textarea { width: 100%; padding: 9px 12px; border: 1.5px solid #E2E8F0; border-radius: 9px; font-size: 0.9rem; outline: none; resize: vertical; font-family: inherit; transition: border-color 0.15s; box-sizing: border-box; }
 .field-textarea:focus { border-color: #8B5CF6; }
 .json-error { color: #EF4444; font-size: 0.82rem; }
+.model-picker { position: relative; }
+.model-picker.disabled { opacity: 0.78; }
+.model-input-wrap { position: relative; }
+.model-input { padding-right: 56px; }
+.model-clear { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); border: none; background: transparent; color: #8B5CF6; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.model-dropdown { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: white; border: 1.5px solid #E2E8F0; border-radius: 12px; box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14); max-height: 280px; overflow-y: auto; padding: 8px; }
+.model-option { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border: none; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; }
+.model-option:hover, .model-option.active { background: #F5F3FF; }
+.model-option-id { color: #1F2937; font-size: 0.85rem; font-weight: 600; word-break: break-all; }
+.model-option-label { color: #64748B; font-size: 0.78rem; word-break: break-all; }
+.model-empty { padding: 10px 12px; color: #94A3B8; font-size: 0.82rem; }
+.model-more { border-top: 1px solid #F1F5F9; margin-top: 4px; }
+.model-selected { margin-top: -2px; color: #64748B; font-size: 0.8rem; }
 .toggle-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .toggle-switch { width: 44px; height: 24px; border-radius: 12px; background: #E2E8F0; position: relative; transition: background 0.2s; flex-shrink: 0; }
 .toggle-switch.on { background: #8B5CF6; }

@@ -26,6 +26,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.services.ai_provider_service import AIProtocol
+
 
 # ── Base ──────────────────────────────────────────────────────────────
 class Base(DeclarativeBase):
@@ -107,6 +109,23 @@ class TimestampMixin:
     )
 
 
+# ── AI Provider ───────────────────────────────────────────────────────
+class AIProvider(Base, TimestampMixin):
+    __tablename__ = "ai_providers"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    protocol: Mapped[AIProtocol] = mapped_column(
+        Enum(AIProtocol, name="ai_protocol", native_enum=False), nullable=False
+    )
+    base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    models: Mapped[list | None] = mapped_column(JSON, nullable=True, comment="已保存的模型列表")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    projects: Mapped[list["Project"]] = relationship("Project", back_populates="ai_provider", lazy="selectin")
+
+
 # ── Project ───────────────────────────────────────────────────────────
 class Project(Base, TimestampMixin):
     """options 字段示例：
@@ -150,9 +169,17 @@ class Project(Base, TimestampMixin):
         Uuid, ForeignKey("skills.id", ondelete="SET NULL"), nullable=True,
         comment="该项目绑定的默认 Skill"
     )
+    ai_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("ai_providers.id", ondelete="SET NULL"), nullable=True,
+        comment="项目使用的 AI 服务商"
+    )
+    ai_model: Mapped[str | None] = mapped_column(String(200), nullable=True, comment="项目使用的模型 ID")
 
     skus: Mapped[list["SKU"]] = relationship("SKU", back_populates="project", lazy="selectin")
     skill: Mapped["Skill | None"] = relationship("Skill", foreign_keys=[skill_id], lazy="selectin")
+    ai_provider: Mapped["AIProvider | None"] = relationship("AIProvider", back_populates="projects", lazy="selectin")
+
+    __table_args__ = (Index("ix_projects_ai_provider_id", "ai_provider_id"),)
 
 
 # ── Skill ─────────────────────────────────────────────────────────────

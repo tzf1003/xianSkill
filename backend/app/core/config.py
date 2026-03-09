@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     MINIO_PUBLIC_BASE: str = ""
 
     # --- AI API 格式选择 ---
-    # 可选值: gemini | openai | anthropic
+    # 可选值: gemini | openai | anthropic | volcengine
     AI_API_FORMAT: str = "gemini"
 
     # --- Gemini ---
@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     ANTHROPIC_BASE_URL: str = ""
     ANTHROPIC_IMAGE_MODEL: str = "claude-opus-4-5"
     ANTHROPIC_TEXT_MODEL: str = "claude-opus-4-5"
+
+    # --- Volcengine Ark SDK ---
+    VOLCENGINE_API_KEY: str = ""
+    VOLCENGINE_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+    VOLCENGINE_IMAGE_MODEL: str = "doubao-seededit-3-0-i2i"
+    VOLCENGINE_TEXT_MODEL: str = "doubao-seed-1-6-251015"
 
     # --- 闲管家开放平台（进销存/ERP）---
     XGJ_ERP_APP_KEY: str = ""

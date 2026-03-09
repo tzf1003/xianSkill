@@ -16,11 +16,13 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.domain.models import Asset, Job, JobStatus, SKU, Skill, Token
+from app.domain.models import AIProvider, Asset, Job, JobStatus, Project, SKU, Skill, Token
 from app.infra.storage import StorageService
 from app.runners.prompt_runner import PromptRunner
+from app.services.ai_provider_service import build_project_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,13 @@ async def run_job(job_id_str: str) -> None:
 
         skill_row = (await session.execute(select(Skill).where(Skill.id == job.skill_id))).scalar_one()
         token_row = (await session.execute(select(Token).where(Token.id == job.token_id))).scalar_one()
-        sku_row = (await session.execute(select(SKU).where(SKU.id == token_row.sku_id))).scalar_one_or_none()
+        sku_row = (
+            await session.execute(
+                select(SKU)
+                .options(selectinload(SKU.project).selectinload(Project.ai_provider))
+                .where(SKU.id == token_row.sku_id)
+            )
+        ).scalar_one_or_none()
 
         job_logs.append(_entry(
             "job_context",
@@ -83,6 +91,19 @@ async def run_job(job_id_str: str) -> None:
             combined_prompt_len=len(combined_prompt),
             combined_prompt=combined_prompt,
         ))
+
+        ai_runtime_config = build_project_runtime_config(sku_row.project if sku_row else None)
+        if ai_runtime_config:
+            job_logs.append(_entry(
+                "ai_config_resolved",
+                source=ai_runtime_config.source,
+                provider_id=ai_runtime_config.provider_id,
+                provider_name=ai_runtime_config.provider_name,
+                protocol=ai_runtime_config.protocol,
+                model=ai_runtime_config.model,
+            ))
+        else:
+            job_logs.append(_entry("ai_config_resolved", source="env"))
 
         # 标记运行中
         job.status = JobStatus.running
@@ -115,6 +136,7 @@ async def run_job(job_id_str: str) -> None:
                             skill={
                                 "prompt_template": combined_prompt,
                                 "runner_config": skill_row.runner_config or {},
+                                "ai_config": ai_runtime_config.to_runtime_dict() if ai_runtime_config else None,
                             },
                             inputs=job.inputs or {},
                             storage=storage,

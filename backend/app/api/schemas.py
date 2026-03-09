@@ -15,6 +15,43 @@ class ApiResponse(BaseModel):
     data: dict | list | None = None
 
 
+# ── AI Provider ──────────────────────────────────────────────────────
+class AIModelItem(BaseModel):
+    id: str
+    label: str | None = None
+
+
+class AIProviderCreate(BaseModel):
+    name: str = Field(..., max_length=200)
+    protocol: str = Field(..., pattern=r"^(openai|anthropic|gemini|volcengine)$")
+    base_url: str | None = Field(None, max_length=500)
+    api_key: str | None = None
+    enabled: bool = True
+    models: list[AIModelItem] = Field(default_factory=list)
+
+
+class AIProviderUpdate(BaseModel):
+    name: str | None = Field(None, max_length=200)
+    protocol: str | None = Field(None, pattern=r"^(openai|anthropic|gemini|volcengine)$")
+    base_url: str | None = Field(None, max_length=500)
+    api_key: str | None = None
+    enabled: bool | None = None
+    models: list[AIModelItem] | None = None
+
+
+class AIProviderOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    protocol: str
+    base_url: str | None = None
+    enabled: bool
+    models: list[AIModelItem] = Field(default_factory=list)
+    has_api_key: bool = False
+    api_key_masked: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 # ── Project ──────────────────────────────────────────────────────────
 class ProjectOptionChoice(BaseModel):
     id: str
@@ -47,6 +84,8 @@ class ProjectCreate(BaseModel):
     type: str = "photo_restore"
     options: ProjectOptions | None = None
     skill_id: uuid.UUID | None = None
+    ai_provider_id: uuid.UUID | None = None
+    ai_model: str | None = Field(None, max_length=200)
 
 
 class ProjectUpdate(BaseModel):
@@ -57,6 +96,8 @@ class ProjectUpdate(BaseModel):
     options: ProjectOptions | None = None
     enabled: bool | None = None
     skill_id: uuid.UUID | None = None
+    ai_provider_id: uuid.UUID | None = None
+    ai_model: str | None = Field(None, max_length=200)
 
 
 class ProjectOut(BaseModel):
@@ -69,6 +110,8 @@ class ProjectOut(BaseModel):
     options: ProjectOptions | None
     enabled: bool
     skill_id: uuid.UUID | None = None
+    ai_provider_id: uuid.UUID | None = None
+    ai_model: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
